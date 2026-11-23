@@ -627,8 +627,10 @@ class _EagerForwardGraphs:
     the selfplay/arena identity runs recorded in PR #1414; it is not a
     guarantee for a model, kernel library or driver they did not cover.
 
-    Mechanics: one static device input per input dtype (``max_batch`` rows;
-    graph ``b`` reads its first ``b``), one shared memory pool, capture on
+    Mechanics: one static device input per input dtype (``min(max_rows,
+    max_batch)`` rows -- the largest batch a graph or the over-max-graphs
+    fallback reads; a batch above ``max_rows`` is copied to the device on its
+    own; graph ``b`` reads its first ``b``), one shared memory pool, capture on
     first sight of a batch size after one eager warm-up on the capture stream.
     Every graph's outputs live in the shared pool and are only valid until the
     next replay of ANY graph, so callers copy them out on the replay stream
@@ -757,7 +759,8 @@ class _EagerForwardGraphs:
         buf = self._static_in.get(host.dtype)
         if buf is None:
             o = self._owner
-            buf = torch.zeros((o._max_batch, *host.shape[1:]), dtype=host.dtype, device=o.device)
+            rows = min(self._max_rows, o._max_batch)
+            buf = torch.zeros((rows, *host.shape[1:]), dtype=host.dtype, device=o.device)
             self._static_in[host.dtype] = buf
         return buf
 
@@ -778,15 +781,17 @@ class _EagerForwardGraphs:
         """Forward the pinned host rows ``host`` on the current stream."""
         bsz = int(host.shape[0])
         self._check_binding()
+        if bsz > self._max_rows:
+            # Never captured, so it never needs the static input (which holds
+            # ``max_rows`` rows): the eager forward reads its own device copy.
+            self.eager_over_max_rows += 1
+            return self._forward(host.to(self._owner.device, non_blocking=True))
         static = self._static_input(host)
         xt = static[:bsz]
         xt.copy_(host, non_blocking=True)
         key = (bsz, host.dtype)
         entry = self._graphs.get(key)
         if entry is None:
-            if bsz > self._max_rows:
-                self.eager_over_max_rows += 1
-                return self._forward(xt)
             if len(self._graphs) >= self._max_graphs:
                 self.eager_over_max_graphs += 1
                 return self._forward(xt)
@@ -825,6 +830,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         pad_to_compiled_buckets: bool = False,
         cuda_graphs: bool = False,
         cuda_graph_max_rows: int = 512,
+        forward_chunk_rows: int | None = None,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
@@ -908,6 +914,26 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             self._eager_graphs = _EagerForwardGraphs(self, max_rows=int(cuda_graph_max_rows))
         # Dense forwards that carried a relations input: those run eager.
         self._eager_relations_forwards = 0
+        # Rows per network forward. One call above it runs as consecutive
+        # forwards of at most this many rows on the same stream, written into
+        # one output in row order, so peak device memory follows this bound
+        # instead of the largest batch a caller hands over (the full-width
+        # collect's round 0 handed ~5,000 rows to one eager forward per process
+        # and went over the card: mem_wide2_20261122). Principle: no forward
+        # larger than this evaluator's largest captured graph, so with graphs on
+        # it defaults to ``cuda_graph_max_rows`` and every chunk replays a
+        # graph; without graphs (eager, compiled buckets, compact legal bf16)
+        # the default is no bound -- those callers' forwards are unchanged.
+        # A call of at most this many rows runs exactly the unchunked code.
+        if forward_chunk_rows is None:
+            chunk = int(cuda_graph_max_rows) if self._eager_graphs is not None else None
+        else:
+            chunk = int(forward_chunk_rows)
+            if chunk < 1:
+                raise ValueError(f"forward_chunk_rows must be >= 1, got {forward_chunk_rows}")
+        self._forward_chunk_rows: int | None = chunk
+        self._chunked_forwards = 0  # calls split into chunks
+        self._forward_chunks = 0    # chunks those calls ran as
 
     @property
     def cuda_graphs(self) -> bool:
@@ -925,7 +951,32 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         """
         if self._eager_graphs is None:
             return None
-        return {**self._eager_graphs.stats(), "eager_relations": self._eager_relations_forwards}
+        return {**self._eager_graphs.stats(), "eager_relations": self._eager_relations_forwards,
+                "chunked_forwards": self._chunked_forwards, "forward_chunks": self._forward_chunks}
+
+    @property
+    def forward_chunk_rows(self) -> int | None:
+        """The most rows one network forward runs (None: no bound)."""
+        return self._forward_chunk_rows
+
+    @property
+    def forward_chunk_stats(self) -> dict[str, int]:
+        """Calls split into chunks and the chunks they ran as (any device)."""
+        return {"chunked_forwards": self._chunked_forwards, "forward_chunks": self._forward_chunks}
+
+    def _exceeds_chunk(self, bsz: int) -> bool:
+        """Whether a call of ``bsz`` rows is chunked (not counted)."""
+        return self._forward_chunk_rows is not None and bsz > self._forward_chunk_rows
+
+    def _chunk_spans(self, bsz: int) -> tuple[tuple[int, int], ...] | None:
+        """The call's chunk spans, counted, or None when it runs unchunked."""
+        n = self._forward_chunk_rows
+        if n is None or not self._exceeds_chunk(bsz):
+            return None
+        spans = forward_chunk_spans(bsz, n)
+        self._chunked_forwards += 1
+        self._forward_chunks += len(spans)
+        return spans
 
     @property
     def cuda_graph_shapes(self) -> tuple[int, ...]:
@@ -1038,15 +1089,53 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         buffers valid until the next replay, so callers copy them out on this
         stream before returning (both callers do).
         """
+        spans = self._chunk_spans(bsz)
+        if spans is None:  # the unchunked forward, unchanged
+            if self._eager_graphs is not None:
+                if relations is None:
+                    return self._eager_graphs.run(self._host_input(bsz, slot=slot))
+                self._eager_relations_forwards += 1  # surfaced in cuda_graph_stats
+            xt = self._device_input(bsz, slot=slot)
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
+            )
+            return _policy_output_full(out).detach().float(), out["wdl"].detach().float()
+        # Chunked: each chunk's outputs (graph-static buffers, or eager tensors
+        # the allocator reuses for the next chunk) are copied into one output on
+        # this stream before the next chunk is enqueued; no host sync.
+        host = self._host_input(bsz, slot=slot)
+        pol_out: torch.Tensor | None = None
+        wdl_out: torch.Tensor | None = None
+        for lo, hi in spans:
+            pol, wdl = self._dense_forward_chunk(
+                host[lo:hi], None if relations is None else relations[lo:hi],
+            )
+            if pol_out is None or wdl_out is None:
+                pol_out = pol.new_empty((bsz, *pol.shape[1:]))
+                wdl_out = wdl.new_empty((bsz, *wdl.shape[1:]))
+            pol_out[lo:hi].copy_(pol)
+            wdl_out[lo:hi].copy_(wdl)
+            del pol, wdl
+        assert pol_out is not None
+        assert wdl_out is not None
+        return pol_out, wdl_out
+
+    def _dense_forward_chunk(
+        self, host: torch.Tensor, relations: np.ndarray | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """One chunk's network forward of the pinned host rows ``host``: the
+        unchunked forward above, reading a slice of the staged input."""
         if self._eager_graphs is not None:
             if relations is None:
-                return self._eager_graphs.run(self._host_input(bsz, slot=slot))
+                return self._eager_graphs.run(host)
             self._eager_relations_forwards += 1  # surfaced in cuda_graph_stats
-        xt = self._device_input(bsz, slot=slot)
+        xt = host.to(self.device, non_blocking=True)
         out = _forward_no_grad(
             self.model, xt, device=self.device,
             use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-            relations_t=_relations_to_device(relations, device=self.device, bsz=bsz),
+            relations_t=_relations_to_device(relations, device=self.device, bsz=int(host.shape[0])),
         )
         return _policy_output_full(out).detach().float(), out["wdl"].detach().float()
 
@@ -1118,14 +1207,12 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         pin_pol = self._pinned_pols[slot]
         pin_wdl = self._pinned_wdls[slot]
         if not self._use_cuda:
-            rel_t = _relations_to_device(relations, device=self.device, bsz=bsz)
-            xt = pin_in[:bsz]
-            out = _forward_no_grad(
-                self.model, xt, device=self.device,
-                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
-                relations_t=rel_t,
-            )
-            return _policy_output_full(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
+            spans = self._chunk_spans(bsz)
+            if spans is None:
+                return self._cpu_forward(pin_in[:bsz], relations)
+            parts = [self._cpu_forward(pin_in[lo:hi], None if relations is None else relations[lo:hi])
+                     for lo, hi in spans]
+            return np.concatenate([p for p, _ in parts]), np.concatenate([w for _, w in parts])
 
         stream = torch.cuda.current_stream(torch.device(self.device)) if str(self.device).startswith("cuda") else None
         with self._graph_scope(), launch_guard(self, stream):
@@ -1146,6 +1233,43 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return pol_np.copy(), wdl_np.copy()
         return pol_np, wdl_np
 
+    def evaluate_encoded_with_volatility(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(pol, wdl, volatility), as the base class, under the forward bound: a call
+        above it runs the base forward once per chunk of at most N rows and
+        concatenates the three outputs in row order (Python volatility-aware Gumbel
+        search, roots and leaves). At most N rows: the base code unchanged."""
+        n = int(np.asarray(x).shape[0])
+        spans = self._chunk_spans(n)
+        if spans is None:
+            return super().evaluate_encoded_with_volatility(x, relations)
+        parts = [super(DirectGPUEvaluator, self).evaluate_encoded_with_volatility(
+            x[lo:hi], None if relations is None else relations[lo:hi]) for lo, hi in spans]
+        pol, wdl, vol = (np.concatenate([p[i] for p in parts]) for i in range(3))
+        return pol, wdl, vol
+
+    def _cpu_async(
+        self, rows: int, *, slot: int, relations: np.ndarray | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        """The async entries off CUDA, for ``rows`` staged rows of ``slot``. Within the
+        chunk bound: the original unchunked forward. Above it: the chunked sync forward
+        (a CPU forward is synchronous anyway), returned in the async shape."""
+        if not self._exceeds_chunk(rows):
+            return super().evaluate_encoded_async(self._pinned_inputs_np[slot][:rows], relations=relations)
+        pol, wdl = self._run_forward(rows, copy_out=True, slot=slot, relations=relations)
+        return torch.from_numpy(pol), torch.from_numpy(wdl), None
+
+    def _cpu_forward(
+        self, xt: torch.Tensor, relations: np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        out = _forward_no_grad(
+            self.model, xt, device=self.device,
+            use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            relations_t=_relations_to_device(relations, device=self.device, bsz=int(xt.shape[0])),
+        )
+        return _policy_output_full(out).detach().float().numpy(), out["wdl"].detach().float().numpy()
+
     def evaluate_encoded_async(
         self,
         x: np.ndarray,
@@ -1162,6 +1286,9 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if not self._pad_to_buckets:
             if not self._use_cuda:
                 self.shape_ledger.note("async", int(bsz))
+                if self._exceeds_chunk(bsz):
+                    self._stage_encoded_input(x, bsz)
+                    return self._cpu_async(bsz, slot=0, relations=relations)
                 return super().evaluate_encoded_async(x, relations=relations)
             self._stage_encoded_input(x, bsz)
             self.shape_ledger.note("async", int(bsz))
@@ -1172,9 +1299,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         rows = self._forward_rows(bsz, "async")
         rel = self._pad_relations(relations, bsz, rows)
         if not self._use_cuda:
-            pol_t, wdl_t, event = super().evaluate_encoded_async(
-                self._pinned_inputs_np[0][:rows], relations=rel,
-            )
+            pol_t, wdl_t, event = self._cpu_async(rows, slot=0, relations=rel)
         else:
             pol_t, wdl_t, event = self._async_forward(rows, slot=0, relations=rel)
         return pol_t[:bsz], wdl_t[:bsz], event
@@ -1198,14 +1323,11 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         rows = self._forward_rows(bsz, "async")
         if rows == bsz:
             if not self._use_cuda:
-                xb = self._pinned_inputs_np[slot][:bsz]
-                return super().evaluate_encoded_async(xb, relations=relations)
+                return self._cpu_async(bsz, slot=slot, relations=relations)
             return self._async_forward(bsz, slot=slot, relations=relations)
         rel = self._pad_relations(relations, bsz, rows)
         if not self._use_cuda:
-            pol_t, wdl_t, event = super().evaluate_encoded_async(
-                self._pinned_inputs_np[slot][:rows], relations=rel,
-            )
+            pol_t, wdl_t, event = self._cpu_async(rows, slot=slot, relations=rel)
         else:
             pol_t, wdl_t, event = self._async_forward(rows, slot=slot, relations=rel)
         return pol_t[:bsz], wdl_t[:bsz], event
@@ -1347,32 +1469,74 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
             with torch.cuda.stream(stream):
                 stream.wait_event(cast(Any, event_default))
-                xt = self._device_input(bsz, slot=slot)
-                legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
-                legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
-                if _supports_legal_policy_forward(self.model):
-                    out = _forward_legal_no_grad(
-                        self.model, xt, legal_flat_gpu, legal_counts_gpu,
-                        device=self.device, use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                spans = self._chunk_spans(bsz)
+                if spans is None:
+                    self._legal_forward_into(
+                        self._device_input(bsz, slot=slot), legal_flat, legal_counts, n_legal,
+                        pin_pol[:n_legal], pin_wdl[:bsz],
                     )
                 else:
-                    out = _forward_no_grad(
-                        self.model, xt, device=self.device,
-                        use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+                    self._legal_forward_chunks_into(
+                        self._host_input(bsz, slot=slot), legal_flat, legal_counts, spans,
+                        pin_pol, pin_wdl,
                     )
-                if n_legal > 0:
-                    if _supports_legal_policy_forward(self.model):
-                        legal_logits = _policy_output(out).to(torch.bfloat16)
-                    else:
-                        policy = _policy_output_full(out)[:bsz]
-                        rows = torch.repeat_interleave(torch.arange(bsz, device=self.device), legal_counts_gpu)
-                        legal_logits = policy[rows, legal_flat_gpu].to(torch.bfloat16)
-                    pin_pol[:n_legal].copy_(legal_logits.view(torch.uint16), non_blocking=True)
-                pin_wdl[:bsz].copy_(out["wdl"][:bsz].detach().float(), non_blocking=True)
                 done = torch.cuda.Event()
                 done.record(stream)
 
             return pin_pol[:n_legal], pin_wdl[:bsz], guarded_event(self, done, stream, pin_pol, pin_wdl)
+
+    def _legal_forward_chunks_into(
+        self, host: torch.Tensor, legal_flat: np.ndarray, legal_counts: np.ndarray,
+        spans: tuple[tuple[int, int], ...], pol_dst: torch.Tensor, wdl_dst: torch.Tensor,
+    ) -> None:
+        """The chunked compact-legal forward. Chunk ``[lo, hi)`` owns the compact
+        entries between the cumulative legal counts at its bounds (a zero-count
+        row or chunk owns none) and writes its own slices of the outputs; all on
+        the current stream, so the caller records one completion event."""
+        offsets = np.concatenate(([0], np.cumsum(legal_counts, dtype=np.int64)))
+        for lo, hi in spans:
+            f_lo, f_hi = int(offsets[lo]), int(offsets[hi])
+            self._legal_forward_into(
+                host[lo:hi].to(self.device, non_blocking=True),
+                legal_flat[f_lo:f_hi], legal_counts[lo:hi], f_hi - f_lo,
+                pol_dst[f_lo:f_hi], wdl_dst[lo:hi],
+            )
+
+    def _legal_forward_into(
+        self, xt: torch.Tensor, legal_flat: np.ndarray, legal_counts: np.ndarray, n_legal: int,
+        pol_dst: torch.Tensor, wdl_dst: torch.Tensor,
+    ) -> None:
+        """One compact-legal forward of the device rows ``xt``, enqueued on the
+        current stream into the pinned ``pol_dst`` / ``wdl_dst``."""
+        bsz = int(xt.shape[0])
+        legal_counts_gpu = torch.as_tensor(legal_counts, dtype=torch.long, device=self.device)
+        legal_flat_gpu = torch.as_tensor(legal_flat, dtype=torch.long, device=self.device)
+        if _supports_legal_policy_forward(self.model):
+            out = _forward_legal_no_grad(
+                self.model, xt, legal_flat_gpu, legal_counts_gpu,
+                device=self.device, use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
+        else:
+            out = _forward_no_grad(
+                self.model, xt, device=self.device,
+                use_amp=self._use_amp, amp_dtype=self._amp_dtype,
+            )
+        if n_legal > 0:
+            if _supports_legal_policy_forward(self.model):
+                legal_logits = _policy_output(out).to(torch.bfloat16)
+            else:
+                policy = _policy_output_full(out)[:bsz]
+                rows = torch.repeat_interleave(torch.arange(bsz, device=self.device), legal_counts_gpu)
+                legal_logits = policy[rows, legal_flat_gpu].to(torch.bfloat16)
+            pol_dst.copy_(legal_logits.view(torch.uint16), non_blocking=True)
+        wdl_dst.copy_(out["wdl"][:bsz].detach().float(), non_blocking=True)
+
+
+def forward_chunk_spans(rows: int, chunk_rows: int) -> tuple[tuple[int, int], ...]:
+    """``[lo, hi)`` spans of at most ``chunk_rows`` rows covering ``0..rows`` in order."""
+    if chunk_rows < 1:
+        raise ValueError(f"chunk_rows must be >= 1, got {chunk_rows}")
+    return tuple((lo, min(lo + chunk_rows, rows)) for lo in range(0, max(0, int(rows)), int(chunk_rows)))
 
 
 # Bucket ladder for compiled batched GPU forwards. Coarser than the per-batch
