@@ -50,7 +50,7 @@ history. In short, they:
 7. **Start net and control are stated against generation 2's Stage 0**, which read "adoptable, not replicated".
 8. **Resume and legacy snapshot behaviour** after #1501 / #1503 / #1510 / #1514 is stated.
 9. **The GPU check moves to the shared scan v5** (`8b4261b0…`), with the harness and wording fixes listed.
-11. **#1516 review at `aa891a7fa` (FIX), applied in one push:**
+10. **#1516 review at `aa891a7fa` (FIX), applied in one push:**
     - Part 2's update count is its OWN plan's count, not the pilot collection's 1,412; R, the decay deciles and the
       wall projection are formulas of the realised count (the same defect class that stopped generation 2 on
       2026-11-22: a constant of one collection required of another);
@@ -61,7 +61,7 @@ history. In short, they:
     - the memory smoke has fixed stems, a `HOLD_MEM` refusal and a flatness condition (no retry into a pass);
     - notes: the take-effect check is a wiring check; the equal budget equalises child forwards only; a FEN-level
       overlap check between the audit set and the collections joins P3; a Stage B futility reading (report-only).
-10. **Evidence-log rows** are added for step 1b, the memory diagnostic, the visit-class split, the full-width visit
+11. **Evidence-log rows** are added for step 1b, the memory diagnostic, the visit-class split, the full-width visit
     distribution, the two-visit and visits-per-child scopings, the order form's step-0 activity and the full-list ρ.
 
 ## Why
@@ -236,7 +236,12 @@ ea56911fc -- chess_anti_engine scripts/simple_rl_loop.py`):
     moves `TSHA`, and nothing else. The argument: training never calls it. The learner imports `simple_rl/collect.py`
     for row loading, which imports `inference.py` as a module, but no evaluator is built on the training path. The
     cells read stored `x` and stored targets, and guard (d) (`check_load.py`) loads through `uci/model_loader.py`.
-    If #1515 merges before #1511, the list stays empty-diff and this clause is not used;
+    If #1515 merges before #1511, the list stays empty-diff and this clause is not used. The addendum that moves
+    `TSHA` also lists #1511's `simple_rl/collect.py` hunks: `CollectSettings`, `realised_eval_max_batch` and
+    `validate_settings`, the evaluator (`_evaluator`, `evaluator_graph_record`), the VRAM-fit constants and
+    `check_vram`, `proc_openings`, and `common`. None of them is in the row loaders `learn.py` uses (`generation_shards`,
+    `load_generation_rows_where`, `gather_rows`, `shard_row_meta`, `concat_arrays`), and the addendum checks that by
+    diff;
   - `replay/shard.py`'s diff from the PIN is still exactly #1477's optional field (sha256 `418b6e96…`, unchanged).
 - **(c) Default off is off on the real inputs:** `Zq_main` vs the banked Zq, paired, in Stage A (the Zq code-base
   control). Revision 6's `P0_main` control is dropped with the P family. `Zq_main` exercises everything `P0_main`
@@ -556,12 +561,20 @@ Update 1 takes 5–7 s (kernel warm-up); the probe keeps 50 updates.
   `Zq_diff_s50`, and in Part 2 one for `Zq_list_s50` at R.
 - **ABORT iff peak reserved over the 3 updates > 0.85 × the device total (27.0 GiB), or any update dies, or memory
   is not flat between updates 2 and 3** (`reserved_now` or peak reserved grows by > 0.10 GiB from update 2 to 3;
-  generation 2's smoke measured exactly 0.0 for both). At chunk 64 that writes `SB7/MEM_ABORT_C64_part<k>` and the
-  fallback below may run once; at chunk 32, or for any other abort, no cell trains and `SB7/HOLD_MEM` is written.
+  generation 2's smoke measured exactly 0.0 for both). The smoke writes the markers ITSELF, from its own JSON
+  verdict only (#1516 review, round 2): an ABORT at chunk 64 writes `SB7/MEM_ABORT_C64_part<k>` and exits 3, and the
+  fallback below may run once; an ABORT at chunk 32 writes `SB7/HOLD_MEM` and exits 3. Any other non-zero exit (a
+  stem or `HOLD_MEM` refusal, an import error, a failed consumption assert, an unrelated crash) writes no marker, and
+  the operator line writes `SB7/HOLD_MEM` for it: a non-memory failure goes to the owner, never to the fallback.
 - **No retry into a pass, mechanically:** the output stems are fixed, `SB7/mem_smoke_<cell>` and
   `SB7/mem_smoke_<cell>_c32`, and the smoke refuses if its stem exists. It refuses while `SB7/HOLD_MEM` exists, and
-  a `_c32` run refuses unless `MEM_ABORT_C64_part<k>` exists (the fallback follows a chunk-64 abort, never replaces a
-  pass). Step 1b's harness tests all four refusals.
+  a `_c32` run refuses unless THAT cell's chunk-64 JSON reads ABORT and `MEM_ABORT_C64_part<k>` exists. So a chunk-64
+  PASS followed by a rerun of step 1b is refused by the stem rule without writing any marker, and a cell whose
+  chunk-64 smoke passed never gets a chunk-32 run. Step 1b's harness tests every refusal and both markers.
+- **The part's chunk size is sealed from the smoke results, never set by hand:** `sib_mem_smoke.py seal SB7 <k>
+  <cells>` writes `SB7/prelaunch/chunk_part<k>.json`. It is 64 if every cell's chunk-64 smoke reads PASS, and 32 if
+  every cell that aborted at 64 has a chunk-32 PASS. Otherwise it refuses and writes nothing. A CPU logic smoke, or a
+  smoke run at another chunk than its stem says, is not a verdict.
 - **One registered fallback:** if a sibling smoke ABORTs at chunk 64, it is rerun ONCE at `--sibling-chunk-pairs
   32` (stem `mem_smoke_<cell>_c32`). Chunk size is gradient-equivalent and out of the resume key, so this is not a data change. If that passes,
   every sibling cell of that part trains at 32. A second ABORT holds for the owner.
@@ -701,13 +714,12 @@ TRAIN="--presentations 1 --mirror-prob 0.5 --batch-size 512 --lr 3e-6 --lr-floor
   --kl-policy 0 --kl-wdl 0 --sl-mix-frac 0 --holdout-frac 0.05 --probe-rows 2048 --no-eval"
 Z_V="--value-outcome-weight 0.5 --value-search-weight 0.5 --value-search-source stored_search_wdl"
 W_ORDER=$($PY -c "import json;print(json.load(open('$SB7/prelaunch/strengths.json'))['W_ORDER'])")
-CHUNK=64   # Part 1's sealed chunk size: 64, or 32 after the registered fallback (SB7/prelaunch/chunk_part1.json)
-SIBP="--sibling-dir $SIDE --sibling-rows 128 --sibling-chunk-pairs $CHUNK"
+SIBP64="--sibling-dir $SIDE --sibling-rows 128 --sibling-chunk-pairs 64"   # the smokes' first shape
 ORD="--sibling-loss order --sibling-order-margin 0.0556 --sibling-order-min-dq 0.0203"
 declare -A CELL=(
   [Zq_main]="$Z_V --w-sibling 0"
-  [Zq_diff_s50]="$Z_V $SIBP --sibling-loss diff --w-sibling 122"
-  [Zq_order_s50]="$Z_V $SIBP $ORD --w-sibling $W_ORDER")
+  [Zq_diff_s50]="$Z_V $SIBP64 --sibling-loss diff --w-sibling 122"
+  [Zq_order_s50]="$Z_V $SIBP64 $ORD --w-sibling $W_ORDER")
 
 # step 1a: touched set re-derived at TSHA (CPU) -- must equal revision 6's
 (cd $TW && PYTHONPATH=. $PY $SB/prelaunch/warm_sidecar.py plan $SB7/warm) || exit 1
@@ -717,12 +729,19 @@ declare -A CELL=(
 # step 1b: memory smokes (GPU alone), then the warm cost probe
 $SB7/operator/operator_gpu_check.sh $IDLE_MIB || exit 8
 [ ! -e $SB7/HOLD_MEM ] || exit 1
-for c in Zq_order_s50 Zq_diff_s50; do   # the smoke refuses an existing stem and an existing HOLD_MEM itself
-  CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. $PY -u $SB7/prelaunch/sib_mem_smoke.py $SB7/mem_smoke_$c 3 $SL \
-    $COLLECT $TRAIN ${CELL[$c]} || { echo "$c: smoke ABORT at chunk 64" > $SB7/MEM_ABORT_C64_part1; exit 1; }
-done   # after MEM_ABORT_C64_part1: the registered fallback, the same line at --sibling-chunk-pairs 32 with stem
-       # mem_smoke_<c>_c32, run once; its abort writes HOLD_MEM (owner); its pass sets CHUNK=32 for every Part 1 cell
-echo "{\"chunk_pairs\": $CHUNK}" > $SB7/prelaunch/chunk_part1.json
+smoke() {   # smoke STEM FLAGS...: exit 3 = a memory ABORT whose marker the smoke wrote itself; any other failure -> owner
+  local rc=0; SIB_MEM_SMOKE_PART=1 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. $PY -u $SB7/prelaunch/sib_mem_smoke.py \
+    $1 3 $SL $COLLECT $TRAIN "${@:2}" || rc=$?
+  case $rc in 0|3) return $rc;; *) echo "$(basename $1): exit $rc (not a memory verdict)" >> $SB7/HOLD_MEM; exit 1;; esac; }
+for c in Zq_order_s50 Zq_diff_s50; do smoke $SB7/mem_smoke_$c ${CELL[$c]} || true; done
+for c in Zq_order_s50 Zq_diff_s50; do   # the registered fallback, once, only for a cell whose chunk-64 smoke aborted
+  [ "$($PY -c "import json;print(json.load(open('$SB7/mem_smoke_$c.json'))['verdict'])")" = ABORT ] || continue
+  smoke $SB7/mem_smoke_${c}_c32 ${CELL[$c]} --sibling-chunk-pairs 32 || exit 1   # its ABORT wrote HOLD_MEM itself
+done
+$PY $SB7/prelaunch/sib_mem_smoke.py seal $SB7 1 Zq_order_s50 Zq_diff_s50 || exit 1
+CHUNK=$($PY -c "import json;print(json.load(open('$SB7/prelaunch/chunk_part1.json'))['chunk_pairs'])")
+SIBP="--sibling-dir $SIDE --sibling-rows 128 --sibling-chunk-pairs $CHUNK"   # every Part 1 sibling cell trains at it
+CELL[Zq_diff_s50]="$Z_V $SIBP --sibling-loss diff --w-sibling 122"; CELL[Zq_order_s50]="$Z_V $SIBP $ORD --w-sibling $W_ORDER"
 (cd $TW && PYTHONPATH=. $PY $SB/prelaunch/warm_sidecar.py warm $SB7/warm && \
   PYTHONPATH=. $PY $SB/prelaunch/warm_sidecar.py check $SB7/warm) || exit 1
 CUDA_VISIBLE_DEVICES=0 COST_PROBE_CACHE=warm PYTHONPATH=. $PY -u $SB7/prelaunch/cost_probe.py $SB7/cost_probe_sib.json 50 \
