@@ -1268,10 +1268,14 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         n = int(np.asarray(x).shape[0])
         spans = self._chunk_spans(n)
         if spans is None:
-            return super().evaluate_encoded_with_volatility(x, relations)
-        parts = [super(DirectGPUEvaluator, self).evaluate_encoded_with_volatility(
-            x[lo:hi], None if relations is None else relations[lo:hi]) for lo, hi in spans]
-        pol, wdl, vol = (np.concatenate([p[i] for p in parts]) for i in range(3))
+            pol, wdl, vol = super().evaluate_encoded_with_volatility(x, relations)
+        else:
+            parts = [super(DirectGPUEvaluator, self).evaluate_encoded_with_volatility(
+                x[lo:hi], None if relations is None else relations[lo:hi]) for lo, hi in spans]
+            pol, wdl, vol = (np.concatenate([p[i] for p in parts]) for i in range(3))
+        # This path never bucket-pads, and chunks belong to one evaluator call.
+        if _FORWARD_SIZE_TRACE and n > 0:
+            _note_forward("dense", n, n, _forward_chunk_rows_of(self))
         return pol, wdl, vol
 
     def _cpu_async(
