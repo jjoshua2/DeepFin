@@ -613,7 +613,8 @@ def test_the_slot_broker_records_its_gathered_live_rows(trace, tmp_path, monkeyp
 
 def test_the_shared_broker_records_each_trial_forward(trace) -> None:
     class _Slot:
-        def __init__(self, bsz: int) -> None:
+        def __init__(self, bsz: int, live: int = 0) -> None:
+            self.live_rows = live
             self.state = _STATE_REQUEST
             self.request_mode = _MODE_DENSE_F32
             self.request_id = 7
@@ -644,8 +645,8 @@ def test_the_shared_broker_records_each_trial_forward(trace) -> None:
     broker.unsupported_mode_requests = 0
     broker.device = "cpu"
     with pytest.raises(RuntimeError, match="forward reached"):
-        broker._process_parallel({"t0": [_Slot(3)]})  # pyright: ignore[reportArgumentType]
-    assert _triples(trace) == [("shared_broker", 3, 3)]
+        broker._process_parallel({"t0": [_Slot(3), _Slot(4, live=2)]})  # pyright: ignore[reportArgumentType]
+    assert _triples(trace) == [("shared_broker", 3 + 2, 7)]
 
 
 # --- second fix round (review of 607503d5d) -----------------------------------
@@ -1002,3 +1003,33 @@ def test_an_unchunked_evaluator_records_no_bound_and_one_forward(trace, monkeypa
 def test_the_chunk_count_is_the_ceiling() -> None:
     assert [inference._trace_chunks(r, 16) for r in (1, 16, 17, 32, 33, 64)] == [1, 1, 2, 2, 3, 4]
     assert inference._trace_chunks(10_000, None) == 1
+
+
+def test_switched_off_no_broker_reads_the_live_rows_field(tmp_path, monkeypatch) -> None:
+    """With both diagnostics off nothing branches on the slot header's live_rows
+    bytes: reading them raises here, and a SlotBroker batch still completes."""
+    monkeypatch.setattr(inference, "_FORWARD_SIZE_TRACE", False)
+    monkeypatch.setattr(inference, "_BATCH_TRACE_ENABLED", False)
+
+    def boom(_self):
+        raise AssertionError("slot live_rows read with the diagnostics off")
+
+    monkeypatch.setattr(_InferenceSlot, "live_rows", property(boom))
+    publish = tmp_path / "publish"
+    publish.mkdir()
+    broker = SlotBroker(publish_dir=publish, num_slots=1, max_batch_per_slot=8, device="cpu",
+                        compile_inference=False, batch_wait_ms=0.0,
+                        slot_prefix=f"cae-off-{uuid.uuid4().hex}")
+    try:
+        monkeypatch.setattr(SlotBroker, "_ensure_model", lambda _self: None)
+        broker._model = _TinyPolicy().eval()
+        broker._model_sha = "test"
+        slot = broker._slots[0]
+        slot.batch_size = 3
+        slot.request_mode = _MODE_DENSE_F32
+        slot.request_id = 60
+        slot.state = _STATE_REQUEST
+        assert broker._process_batch([slot]) == 0
+        assert slot.state == _STATE_RESPONSE
+    finally:
+        broker.shutdown()

@@ -5201,8 +5201,14 @@ class SharedSlotBroker:
                 model = self._trial_models[trial_id]
                 stream = self._trial_streams.get(trial_id)
                 if _FORWARD_SIZE_TRACE:
-                    # Unpadded: this broker forwards exactly the gathered rows.
-                    _note_forward("shared_broker", int(xt.shape[0]), int(xt.shape[0]))
+                    # This broker forwards exactly the gathered rows (no padding
+                    # of its own); the slots' diagnostic live_rows exclude the
+                    # clients' callers' upstream padding, as on SlotBroker.
+                    _note_forward(
+                        "shared_broker",
+                        sum(_slot_live_rows(s, b) for s, b in zip(ready, batch_sizes, strict=True)),
+                        int(xt.shape[0]),
+                    )
 
                 if use_cuda and stream is not None:
                     with torch.cuda.stream(stream):
