@@ -298,7 +298,11 @@ def main() -> None:
     ap.add_argument("--repeats", type=int, default=5)
     ap.add_argument("--compile", action="store_true")
     ap.add_argument("--profile-only", action="store_true", help="Skip micro-benchmarks, only run cProfile")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(ap)
     args = ap.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("profile_selfplay", allow_reason=args.allow_busy_gpu, device=args.device)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.default_rng(0)

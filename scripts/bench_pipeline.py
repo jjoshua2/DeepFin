@@ -73,6 +73,10 @@ def bench(label: str, model, evaluator, boards, cboards, rng, simulations):
 
 
 def main():
+    # GPU launch gate (docs/operations.md). No argparse here: the override is the env twin
+    # CAE_ALLOW_BUSY_GPU="<reason>".
+    from chess_anti_engine.utils.gpu_gate import require_gpu_idle
+    require_gpu_idle("bench_pipeline", device=DEVICE)
     rng = np.random.default_rng(42)
     print(f"Device: {DEVICE}, boards: {N_BOARDS}, sims: {SIMULATIONS}")
 

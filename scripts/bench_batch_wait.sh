@@ -2,6 +2,17 @@
 set -euo pipefail
 
 ROOT="${CHESS_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+ALLOW_BUSY=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --allow-busy-gpu) ALLOW_BUSY=(--allow-busy-gpu "${2-}"); shift 2;;
+    *) echo "unknown arg: $1 (only --allow-busy-gpu REASON)" >&2; exit 2;;
+  esac
+done
+# GPU launch gate (docs/operations.md "GPU launch gate"): this benchmark starts a full training driver
+# and `ray stop --force` on cleanup, so it must never start beside a running GPU job by accident.
+_gate=$(bash "$ROOT/scripts/gpu_gate.sh" --tool bench_batch_wait --for-pid $$ ${ALLOW_BUSY[@]+"${ALLOW_BUSY[@]}"}) || exit $?
+[ -z "$_gate" ] || export "$_gate"
 SOURCE_CONFIG="${BENCH_BATCH_WAIT_CONFIG:-$ROOT/configs/pbt2_small.yaml}"
 BROKER_LOG="${BENCH_BATCH_WAIT_BROKER_LOG:-$ROOT/runs/pbt2_small/server/shared_broker.out}"
 TMP_CONFIG="$(mktemp "${TMPDIR:-/tmp}/bench_batch_wait.XXXXXX.yaml")"

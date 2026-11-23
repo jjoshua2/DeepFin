@@ -1040,6 +1040,23 @@ def load_match_resume(
     return MatchResume(rows=out, truncated_tail=log.truncated_tail)
 
 
+def engine_may_use_gpu(command: str) -> bool:
+    """False only for an engine that cannot touch the GPU: a Stockfish binary, or a command that
+    passes ``--device cpu``. Anything else (DeepFin, lc0, Ceres, an unknown binary) counts as GPU."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return True
+    if not tokens:
+        return True
+    if os.path.basename(tokens[0]).lower().startswith("stockfish"):
+        return False
+    for i, tok in enumerate(tokens):
+        if tok == "--device=cpu" or (tok == "--device" and i + 1 < len(tokens) and tokens[i + 1] == "cpu"):
+            return False
+    return True
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--engine-a", required=True, help="UCI engine A (binary path or shell command)")
@@ -1123,7 +1140,13 @@ def main() -> None:
         default=6,
         help="maximum material count to probe for --syzygy-adjudicate-path",
     )
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(p)
     args = p.parse_args()
+    # GPU launch gate (docs/operations.md): gate the HARNESS once, before either engine starts; the
+    # engines inherit CAE_GPU_GATE_PASSED. The engine (chess_anti_engine.uci / deepfin) is never gated.
+    gpu_engines = [c for c in (args.engine_a, args.engine_b) if engine_may_use_gpu(c)]
+    require_gpu_idle("match_vs_uci", allow_reason=args.allow_busy_gpu, device=None if gpu_engines else "cpu")
     if args.games % 2:
         p.error("--games must be even (color-swapped opening pairs)")
 

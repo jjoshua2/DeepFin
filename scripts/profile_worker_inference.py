@@ -157,7 +157,11 @@ def main() -> None:
     p.add_argument("--device", default="cuda")
     p.add_argument("--amp-dtype", default="auto", choices=["auto", "bf16", "fp16", "off"])
     p.add_argument("--out", default="", help="Optional JSON output path.")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(p)
     args = p.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("profile_worker_inference", allow_reason=args.allow_busy_gpu, device=args.device)
 
     if not str(args.device).startswith("cuda"):
         raise SystemExit("profile_worker_inference.py requires a CUDA device")

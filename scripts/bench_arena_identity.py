@@ -48,7 +48,11 @@ def main() -> None:
     p.add_argument("--inference-only", action="store_true")
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--out", required=True)
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(p)
     args = p.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("bench_arena_identity", allow_reason=args.allow_busy_gpu, device=args.device)
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(args.threads)
     torch.manual_seed(args.seed)

@@ -345,7 +345,18 @@ def resources(config, _children, started, startup=False):
     require(rss <= config["combined_rss_gib"] * GIB, "combined RSS cap")
 
 
-def run(config, config_ref):
+GATE_WAIT_S = 900  # bounded wait for a busy GPU before training A, as the bank guards' re-guard
+
+
+def _gate_env(a_desc):
+    """Training A's environment, minus our own CAE_GPU_GATE_PASSED (it would pass as 'inherited')."""
+    env = {**os.environ, **a_desc.get("env", {})}
+    env.pop("CAE_GPU_GATE_PASSED", None)
+    return env
+
+
+def run(config, config_ref, allow_reason=None):
+    from chess_anti_engine.utils import gpu_gate
     libc = ctypes.CDLL(None, use_errno=True)
     require(libc.prctl(36, 1, 0, 0, 0) == 0, "cannot enable child subreaper")
     prep_plan = pin(config["preparation_plan"])
@@ -409,6 +420,7 @@ def run(config, config_ref):
                 prep_desc.get("env", {}),
             )
             ready = train = None
+            gate_refused_since = None
             seals = [
                 Path(config["preparation_control"])
                 / "cohorts"
@@ -450,12 +462,25 @@ def run(config, config_ref):
                             "base readiness missing",
                         )
                         resources(config, children, start, startup=True)
-                        train = launch(
-                            "training-A",
-                            a_desc["argv"],
-                            a_desc["cwd"],
-                            a_desc.get("env", {}),
-                        )
+                        # GPU launch gate, re-checked here: training A starts hours after the
+                        # startup gate, so the startup pass must not cover it. A busy GPU delays
+                        # the launch for up to GATE_WAIT_S (re-checked every loop), then fails.
+                        decision = gpu_gate.check("factorial_prepare_and_train", allow_reason=allow_reason,
+                                                  env=_gate_env(a_desc))
+                        if decision.passed:
+                            train = launch(
+                                "training-A",
+                                a_desc["argv"],
+                                a_desc["cwd"],
+                                a_desc.get("env", {}),
+                            )
+                        else:
+                            if gate_refused_since is None:
+                                gate_refused_since = time.monotonic()
+                                print("gpu_gate: training A waits: " + "; ".join(decision.reasons),
+                                      file=sys.stderr, flush=True)
+                            require(time.monotonic() - gate_refused_since < GATE_WAIT_S,
+                                    "GPU launch gate refused training A: " + "; ".join(decision.reasons))
                 if train is not None:
                     require(train.poll() in (None, 0), "training A process failed")
                     if train.poll() == 0 and prep.poll() == 0:
@@ -498,7 +523,12 @@ def main():
     parser.add_argument("--config", required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--base-readiness", action="store_true")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(parser)
     args = parser.parse_args()
+    if not args.base_readiness:  # the readiness child runs with CUDA_VISIBLE_DEVICES= (empty)
+        # GPU launch gate (docs/operations.md); training A is gated again right before it starts.
+        require_gpu_idle("factorial_prepare_and_train", allow_reason=args.allow_busy_gpu)
     config_ref = {"path": args.config, "sha256": args.sha256}
     config = pin(config_ref)
 
@@ -510,7 +540,7 @@ def main():
     if args.base_readiness:
         base_readiness(config)
     else:
-        run(config, config_ref)
+        run(config, config_ref, allow_reason=args.allow_busy_gpu)
 
 
 if __name__ == "__main__":
