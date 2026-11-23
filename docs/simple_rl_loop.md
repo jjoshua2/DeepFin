@@ -555,18 +555,39 @@ the next stage boundary, and the driver still refuses to START a stage while a
 pause marker exists.
 
 GPU memory: at the start the collect refuses, and never silently steps K down,
-when K × 1.10 × max(48 MiB per sim + 35.52 MiB per board, 2.006 MiB per forward row
-− 4348 MiB) exceeds the usable memory, min(free, 83% of the card). Forward rows are
-min(leaf buffer, `--eval-chunk-rows`), and the board term is the fitted 1.11 MiB per
-leaf row at topk 16's 32 rows a board (identical on every fitted point; to be
-re-validated after forward chunking, see below). The first term is
-a least-squares fit to the multi-process and ≤ 256-game peaks (within −8% / +9% of
-each); above ~8k leaf rows in one process the peak grows faster (64 sims, 1 × 512
-peaked at 29.9 GB, 25% above the line), which the second term, through 1 × 256 and
-1 × 512, covers. When no process count fits, the refusal says to lower
-`--concurrency`. The usable limit is measured: 8 × 96 at
-16 sims peaked at 31.0 GB of 32 and ran 22% slower than 6 × 96 at 25.9 GB, which ran
-at full speed.
+when K × 1.10 × the charge per process exceeds the usable memory, min(free, 83% of
+the card). The charge is fitted on chunked collects (PR #1511), at 3 × 128 games and
+64 sims. Per process it is (peak − idle) / 3, taking the largest arm at each forward
+size. Forward rows are min(leaf buffer, `--eval-chunk-rows`).
+
+| forward rows | knob off | full width, topk 16 | full width, topk 32 | charged (before × 1.10) |
+|---|---|---|---|---|
+| 512 | 2,622 MiB | 2,560 | 2,684 (2,638 at `4943adea2`) | 2,684 |
+| 1,024 | 3,867 | — | 4,291 | 4,291 |
+| 2,048 | 6,474 | — | 5,838 | 6,474 |
+
+- **Sources:** the N = 512 points are from head `1e3a537f6` (operator bank
+  `chunk_meas_20261122`), the others from `4943adea2` (`chunk_meas2_20261122`).
+- **Fit quality:** predicted / measured is 1.10–1.23 at every point and never below 1.
+- **Between and beyond the points:** the charge is linear between the measured
+  forward sizes. Above 2,048 rows it runs through the unchunked eager points, 4,096
+  rows at 9,061 MiB and 16,384 rows at 28,515. Those are model-level only:
+  `--eval-chunk-rows` above 2,048 is refused.
+- **Leaf buffer:** above the largest measured one (8,192 rows), 0.02 MiB a row is
+  added, about one dense fp32 policy row.
+- **Other sims or games per process:** the charge is scaled by the unchunked line
+  (48 MiB per sim + 35.52 MiB per board, fitted on the 2026-11-20 peaks, within
+  −8% / +9% of each) relative to its value at 64 × 128. Below that point the line
+  itself is a floor, so the 16-sim shapes keep their measured charge: 8 × 64 fits
+  and 8 × 96 is refused.
+- **`extrapolated`:** any shape outside the measured one (another K, sims, games per
+  process, a forward size between the points, or a larger leaf buffer) is marked
+  `extrapolated` in `gpu_memory_check`, with `extrapolated_because` listing why, and
+  in the log line. 4 × 128 and 3 × 192 are not measured yet.
+- When no process count fits, the refusal says to lower `--concurrency`.
+- **The usable limit is measured:** 8 × 96 at 16 sims peaked at 31.0 GB of 32 and ran
+  22% slower than 6 × 96 at 25.9 GB, which ran at full speed.
+
 With K > 1 the free memory is read with nvidia-smi, so the driver does not open a
 495 MiB CUDA context. It does this only when the card can be named unambiguously:
 the `CUDA_VISIBLE_DEVICES` entry is a `GPU-` UUID, or the host has a single card,
@@ -643,14 +664,10 @@ and on the CPU.
 `--eval-chunk-rows` accepts 1 to 2,048, and is temporary, for the N comparison.
 Chunks above 512 rows (the graph cap) are eager forwards, not graph replays: they
 count in `cuda_graph_stats` `eager_over_max_rows`, which is 0 only at N ≤ 512. The
-GPU memory check marks every chunked shape `extrapolated` in its record and log
-line: its fit was made on unchunked peaks. At 3 × 128, N = 512 it predicts 8,381
-MiB per process against a measured 2,560–2,684. The memory check vouches only for
-forwards up to the largest eager forward its line was measured inside: 2,048 rows,
-6,476 MiB per process, against the line's 8,381. A 4,096-row forward measured 9,061
-MiB per process, outside the line, and a 5,300-row forward went over the card. Yet
-the steep term passed both at 3 × 128 (24.55 GiB against 26.43 usable). So a larger
-value is refused at start, not charged, until the check is refit after chunking.
+GPU memory check is fitted on chunked collects at N = 512, 1,024 and 2,048 (see
+"GPU memory" under Collect processes). Above 2,048 rows it has only unchunked points
+(a 4,096-row forward measured 9,061 MiB per process, and a 5,300-row forward went over
+the card), so a larger value is refused at start, not charged.
 `DirectGPUEvaluator(forward_chunk_rows=...)` defaults to the evaluator's own graph
 cap when graphs are on, and to no bound otherwise, so the eager, compiled-bucket
 (UCI) and compact-legal evaluators are unchanged.

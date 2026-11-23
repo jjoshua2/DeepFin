@@ -19,6 +19,7 @@ halving survivor and played move its target came from.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -412,10 +413,10 @@ def realised_eval_max_batch(settings: CollectSettings) -> int:
 COLLECT_CUDA_GRAPH_MAX_ROWS = 512
 
 
-# The largest forward the memory model is known to cover: 3 x 128 at 64 sims with 2,048-row eager forwards
-# (knob off, pin fd8c0ce08) measured 6,476 MiB per process, inside the line's 8,381; with 4,096-row forwards
-# (topk 16, knob on) it measured 9,061, outside it, and a 5,300-row forward went over the card
-# (mem_wide2_20261122). A larger bound waits for the post-chunking refit of check_vram.
+# The largest forward the memory check has a measured chunked point for: 2,048 rows (3 x 128 at 64 sims,
+# 6,474 MiB per process knob off, 5,838 at topk 32: chunk_meas2_20261122). Above it the only points are
+# unchunked (4,096 rows 9,061 MiB per process; a 5,300-row forward went over the card at 3 x 128), so a
+# larger bound is refused rather than charged until a chunked point above 2,048 is measured.
 COLLECT_MAX_EVAL_CHUNK_ROWS = 2048
 
 
@@ -426,8 +427,8 @@ def realised_eval_chunk_rows(settings: CollectSettings) -> int:
     if not 1 <= int(settings.eval_chunk_rows) <= COLLECT_MAX_EVAL_CHUNK_ROWS:
         raise ValueError(
             f"--eval-chunk-rows must be between 1 and {COLLECT_MAX_EVAL_CHUNK_ROWS}, got {settings.eval_chunk_rows}: "
-            "above that the GPU memory check cannot vouch for the eager forward (a 5,300-row forward went over "
-            "the card at 3 x 128); a larger bound waits for the check's refit")
+            "above that the GPU memory check has no measured chunked point (a 5,300-row forward went over "
+            "the card at 3 x 128)")
     return int(settings.eval_chunk_rows)
 
 
@@ -494,38 +495,42 @@ DRAINED = "drained.json"
 class CollectDrained(Exception):
     """The collect stopped dealing on ``<run>/STOP``, let its in-flight games
     finish and exited unsealed; a rerun continues at the next dole index."""
-# Peak VRAM per collect process, fitted (least squares) to the 2026-11-20 RTX 5090
-# measurements (SL base, nvidia-smi MiB, total / K): 16 sims x 64 / 96 / 128 games
-# = 2858 / 4321 / 4806, 32 sims x 128 = 6553, 64 sims x 128 / 256 = 7368 / 12085.
-# Per process ~ 48 MiB per sim + 1.11 MiB per leaf row (the evaluator cap the
-# search asks for: 2048 / 3072 / 4096 / 8192 rows at 64 / 96 / 128 / 256 games,
-# topk 16), within -8% / +9% of every one of those points; x 1.10 safety.
-# Above ~8k leaf rows in one process the peak grows faster than that line: 64 sims
-# x 512 games in ONE process (16384 rows) peaked at 28,515 MiB, which the line puts
-# at 21,260 (-25%). The steep segment through 1 x 256 and 1 x 512 (64 sims) is
-# ~2.006 MiB per row - 4348 MiB; the model takes the larger of the two.
-# Since forwards are chunked (``eval_chunk_rows``) the two terms are charged by
-# what each one tracks (TO BE RE-VALIDATED against the post-chunking
-# measurements of knob-off, full-width topk 16 and topk 32 at 3 x 128):
-#   * the line by BOARDS: every fitted point is topk 16, whose leaf buffer is 32
-#     rows a board, so 1.11 MiB a row is 35.52 MiB a board on every fitted point;
-#     charging the board keeps the fit there and stops a wider topk (a larger
-#     reservation no forward reaches) from charging memory it never uses;
-#   * the steep segment by the rows of the largest FORWARD, min(leaf buffer,
-#     eval_chunk_rows): it was measured with 8k-16k-row eager forwards
-#     (memory follows rows forwarded, ~1.25 MiB a row: mem_wide2_20261122).
-# A chunked shape lies OUTSIDE every fitted point (all were unchunked), so its
-# charge is an extrapolation and the record says so (``extrapolated``): at 3 x 128,
-# N = 512 the model predicts 8,381 MiB per process against a measured 2,560-2,684
-# (chunk_meas_20261122), ~3.2x conservative. Known wrong in the other direction,
-# for the refit's must-refuse list: topk 21 at 41 sims at 3 x 128 is charged like
-# topk 16 (20.99 GiB, passes) although that shape, unchunked, went over the card
-# (mem_wide2_20261122); it passes now only because chunking bounds its forwards.
+# Peak VRAM per collect process (MiB), refit after forward chunking (PR #1511).
+#
+# CHUNKED FIT (the measured domain): K = 3 processes x 128 games, 64 sims, chunked forwards of
+# N = 512 / 1024 / 2048 rows; per process = (peak - idle) / 3 from the operator's nvidia-smi sampler,
+# the largest arm at each N (operator banks chunk_meas_20261122, chunk_meas2_20261122):
+#   N =  512: knob off 2,622, full-width topk 16 2,560, topk 32 2,684 (all three at head 1e3a537f6);
+#             topk 32 again 2,638 at 4943adea2                                      -> 2,684
+#   N = 1024: topk 32 4,291, knob off 3,867 (4943adea2)                              -> 4,291
+#   N = 2048: topk 32 5,838, knob off 6,474 (4943adea2)                              -> 6,474
+#   (unchunked off at fd8c0ce08, 2,048-row eager forwards: 6,476, the same point)
+# Beyond 2,048 rows (model level only: --eval-chunk-rows refuses them) the knots are the unchunked
+# eager points: 4,096-row forwards 9,061 (topk 16, 3 x 128, fd8c0ce08), 16,384-row forwards 28,515
+# (64 sims, 1 x 512). Between knots the charge is linear; below 512 rows (graph replays) it is the
+# 512 knot. The leaf-buffer reservation adds 0.02 MiB a row above the largest measured one (8,192
+# rows at topk 32): one dense fp32 policy row is 4,672 x 4 B = 0.018 MiB.
+#
+# OUTSIDE the domain (other sims or games per process) the chunked charge is scaled by the
+# unchunked line's ratio to its own value at 64 sims x 128 games (line = 48 MiB per sim + 35.52 MiB
+# per board, fitted on the 2026-11-20 unchunked peaks: 16 sims x 64 / 96 / 128 = 2858 / 4321 / 4806,
+# 32 sims x 128 = 6553, 64 sims x 128 / 256 = 7368 / 12085, within -8% / +9%); below that point
+# (ratio < 1) the line itself is a floor, because its unchunked measurements bound a chunked run
+# from above and the chunked fit was never measured there (16-sim shapes keep their measured
+# charge: 8 x 64 fits, 8 x 96 is refused). Every shape outside the domain, every N between the
+# knots, and any K other than 3 is marked ``extrapolated`` in the record. x 1.10 safety.
+# Residuals at the fitted points (predicted / measured, safety included): 1.10-1.15 at N = 512,
+# 1.10-1.23 at 1024 (1.2206 knob off), 1.10-1.23 at 2048 (1.2198 topk 32): never below 1 (the largest arm sets each knot).
+_VRAM_CHUNK_KNOTS: tuple[tuple[int, float], ...] = (
+    (512, 2684.0), (1024, 4291.0), (2048, 6474.0), (4096, 9061.0), (16384, 28515.0))
+_VRAM_FIT_SIMS = 64
+_VRAM_FIT_BOARDS = 128
+_VRAM_FIT_PROCS = 3
+_VRAM_FIT_ROWS = (512, 1024, 2048)  # chunk sizes measured at the fit shape
+_VRAM_FIT_MAX_LEAF_ROWS = 8192      # largest measured leaf-buffer reservation (topk 32 x 2 x 128)
+_VRAM_MIB_PER_RESERVED_ROW = 0.02
 _VRAM_MIB_PER_SIM = 48.0
-_VRAM_MIB_PER_LEAF_ROW = 1.11
-_VRAM_FIT_ROWS_PER_BOARD = 32  # topk 16 x 2 (leaf_buffer_rows at every fitted point)
-_VRAM_STEEP_MIB_PER_LEAF_ROW = 2.006
-_VRAM_STEEP_MIB_OFFSET = -4348.0
+_VRAM_MIB_PER_BOARD = 35.52
 _VRAM_SAFETY = 1.10
 # Usable fraction of the card's memory: 8 x 96 at 16 sims peaked at 31,048 MiB
 # (95% of the 5090) and ran 22% slower than 6 x 96 at 25,926 MiB (80%), which ran
@@ -615,13 +620,51 @@ def proc_openings(openings: list[dict[str, Any]], proc: int, procs: int) -> list
     return openings[int(proc)::int(procs)]
 
 
+def _chunk_mib(forward_rows: int) -> float:
+    """Per-process MiB at the fit shape for forwards of ``forward_rows`` rows (linear between knots)."""
+    knots = _VRAM_CHUNK_KNOTS
+    r = max(int(forward_rows), knots[0][0])
+    for (r0, m0), (r1, m1) in itertools.pairwise(knots):
+        if r <= r1:
+            return m0 + (m1 - m0) * (r - r0) / (r1 - r0)
+    (r0, m0), (r1, m1) = knots[-2], knots[-1]
+    return m1 + (m1 - m0) * (r - r1) / (r1 - r0)
+
+
+def vram_per_proc_mib(sims: int, boards: int, forward_rows: int, leaf_rows: int) -> tuple[float, list[str]]:
+    """(charged MiB of ONE collect process before the safety factor, why it is outside the fit).
+
+    Takes the forward rows directly so shapes that ``--eval-chunk-rows`` no longer allows can still
+    be checked against the model (the refit's must-refuse cases)."""
+    line = _VRAM_MIB_PER_SIM * int(sims) + _VRAM_MIB_PER_BOARD * int(boards)
+    ratio = line / (_VRAM_MIB_PER_SIM * _VRAM_FIT_SIMS + _VRAM_MIB_PER_BOARD * _VRAM_FIT_BOARDS)
+    mib = _chunk_mib(forward_rows) * ratio + _VRAM_MIB_PER_RESERVED_ROW * max(0, int(leaf_rows) - _VRAM_FIT_MAX_LEAF_ROWS)
+    if ratio < 1:
+        mib = max(mib, line)
+    why = []
+    if (int(sims), int(boards)) != (_VRAM_FIT_SIMS, _VRAM_FIT_BOARDS):
+        why.append(f"{sims} sims x {boards} games per process (fit: {_VRAM_FIT_SIMS} x {_VRAM_FIT_BOARDS})")
+    if int(forward_rows) not in _VRAM_FIT_ROWS:
+        why.append(f"forwards of {forward_rows} rows (measured: {', '.join(map(str, _VRAM_FIT_ROWS))})")
+    if int(leaf_rows) > _VRAM_FIT_MAX_LEAF_ROWS:
+        why.append(f"a {leaf_rows}-row leaf buffer (measured up to {_VRAM_FIT_MAX_LEAF_ROWS})")
+    return mib, why
+
+
+def vram_charge(settings: CollectSettings) -> tuple[float, list[str]]:
+    """(conservative peak VRAM of ``collect_procs`` processes in GiB, why it is extrapolated)."""
+    boards = max(1, min(int(settings.concurrency), int(settings.games)))
+    leaf_rows = realised_eval_max_batch(settings)
+    forward_rows = min(leaf_rows, realised_eval_chunk_rows(settings))
+    mib, why = vram_per_proc_mib(int(settings.sims), boards, forward_rows, leaf_rows)
+    if int(settings.collect_procs) != _VRAM_FIT_PROCS:
+        why.append(f"--collect-procs {settings.collect_procs} (fit: {_VRAM_FIT_PROCS})")
+    return _VRAM_SAFETY * mib * int(settings.collect_procs) / 1024.0, why
+
+
 def vram_need_gib(settings: CollectSettings) -> float:
     """Conservative peak VRAM of ``collect_procs`` processes at these settings (GiB)."""
-    boards = max(1, min(int(settings.concurrency), int(settings.games)))
-    forward_rows = min(realised_eval_max_batch(settings), realised_eval_chunk_rows(settings))
-    per_mib = max(_VRAM_MIB_PER_SIM * int(settings.sims) + _VRAM_MIB_PER_LEAF_ROW * _VRAM_FIT_ROWS_PER_BOARD * boards,
-                  _VRAM_STEEP_MIB_PER_LEAF_ROW * forward_rows + _VRAM_STEEP_MIB_OFFSET)
-    return _VRAM_SAFETY * per_mib * int(settings.collect_procs) / 1024.0
+    return vram_charge(settings)[0]
 
 
 def _nvidia_smi_target(index: int) -> str | None:
@@ -695,15 +738,14 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
         return None
     free, total, source = _gpu_memory(settings)
     usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
-    need = vram_need_gib(settings)
-    # every fitted point forwarded its whole leaf buffer at once; a chunked shape is outside them
-    extrapolated = realised_eval_chunk_rows(settings) < realised_eval_max_batch(settings)
+    need, why = vram_charge(settings)
+    extrapolated = bool(why)
     record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,
-              "collect_procs": int(settings.collect_procs), "source": source, "extrapolated": extrapolated}
+              "collect_procs": int(settings.collect_procs), "source": source, "extrapolated": extrapolated,
+              "extrapolated_because": why}
     if extrapolated:
-        print(f"[simple_rl] GPU memory check: {need:.1f} GiB is EXTRAPOLATED (forwards chunked at "
-              f"{realised_eval_chunk_rows(settings)} rows; the fit is unchunked; ~3x conservative at 3 x 128, "
-              "N = 512); refit pending", flush=True)
+        print(f"[simple_rl] GPU memory check: {need:.1f} GiB is EXTRAPOLATED, outside the measured chunked "
+              f"fit (3 x 128 games, 64 sims, 512 / 1024 / 2048-row forwards): {'; '.join(why)}", flush=True)
     if need > usable:
         per = need / int(settings.collect_procs)
         fit = int(usable // per)
@@ -713,7 +755,7 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
         raise ValueError(
             f"--collect-procs {settings.collect_procs} x --concurrency {settings.concurrency} at --sims "
             f"{settings.sims} needs about {need:.1f} GiB of GPU memory ({per:.1f} GiB per process, fitted peak x "
-            f"{_VRAM_SAFETY}), but only {usable:.1f} GiB is usable: {free / 2**30:.1f} of {total / 2**30:.1f} GiB "
+            f"{_VRAM_SAFETY}{', extrapolated' if extrapolated else ''}), but only {usable:.1f} GiB is usable: {free / 2**30:.1f} of {total / 2**30:.1f} GiB "
             f"free, and the measured usable limit is ~{VRAM_USABLE_FRACTION:.0%} of the card (31.0 GB of 32 ran "
             f"22% slower than 25.9 GB). Free the GPU, lower --concurrency, or {advice}")
     return record
