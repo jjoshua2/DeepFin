@@ -1033,3 +1033,75 @@ def test_switched_off_no_broker_reads_the_live_rows_field(tmp_path, monkeypatch)
         assert slot.state == _STATE_RESPONSE
     finally:
         broker.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("q_scale", "fpu", "chunk_rows", "pad"),
+    [(0.5, 0.0, 2, True), (0.0, 0.2, None, False)],
+    ids=["q-scale-chunked", "fpu-unchunked"],
+)
+def test_python_gumbel_traces_volatility_root_and_leaf_calls(
+    hist, trace, monkeypatch, q_scale: float, fpu: float,
+    chunk_rows: int | None, pad: bool,
+) -> None:
+    from chess_anti_engine.mcts.gumbel import run_gumbel_root_many
+
+    class VolatilitySpy(DirectGPUEvaluator):
+        def evaluate_encoded_with_volatility(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            calls.append(int(x.shape[0]))
+            return super().evaluate_encoded_with_volatility(x, relations)
+
+    calls: list[int] = []
+    forwards: list[int] = []
+    model = _model_seeded()
+    ev = VolatilitySpy(
+        model, device="cpu", use_amp=False, max_batch=16,
+        pad_to_compiled_buckets=pad, forward_chunk_rows=chunk_rows,
+    )
+    cfg = GumbelConfig(
+        simulations=8, topk=4, add_noise=False,
+        input_extra_features="v1", volatility_q_scale=q_scale, volatility_fpu=fpu,
+    )
+
+    def count_forward(_model: torch.nn.Module, inputs: tuple[torch.Tensor, ...]) -> None:
+        forwards.append(int(inputs[0].shape[0]))
+
+    def search() -> object:
+        return run_gumbel_root_many(
+            None, [chess.Board() for _ in range(3)], device="cpu",
+            rng=np.random.default_rng(73), cfg=cfg, evaluator=ev, return_diagnostics=True,
+        )
+
+    hook = model.register_forward_pre_hook(count_forward)
+    try:
+        with monkeypatch.context() as off:
+            off.setattr(inference, "_FORWARD_SIZE_TRACE", False)
+            off.setattr(inference, "_BUCKET_HIST_ENABLED", False)
+            off.setattr(inference, "_BATCH_TRACE_ENABLED", False)
+            off_result = _digest(search())
+        assert _records(trace) == []
+        assert hist["batch"] == {}
+        off_calls, off_forwards = calls[:], forwards[:]
+        calls.clear()
+        forwards.clear()
+        assert _digest(search()) == off_result
+    finally:
+        hook.remove()
+
+    assert calls == off_calls
+    assert forwards == off_forwards
+    assert len(calls) > 1  # one root call, then actual leaf calls
+    assert calls[0] == 3
+    bound = chunk_rows or max(calls)
+    expected_forwards = [
+        min(rows - lo, bound) for rows in calls for lo in range(0, rows, bound)
+    ]
+    assert forwards == expected_forwards
+    recs = _records(trace)
+    assert [
+        (r["graph"], r["live_rows"], r["call_rows"], r["chunk_rows"], r["chunks"])
+        for r in recs
+    ] == [("dense", n, n, chunk_rows, (n + bound - 1) // bound) for n in calls]
+    assert hist["batch"] == {n: calls.count(n) for n in set(calls)}
