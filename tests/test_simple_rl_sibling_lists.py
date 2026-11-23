@@ -627,7 +627,7 @@ def test_an_unreadable_resume_state_is_refused_with_a_message_never_deleted(
     snaps = _snaps(d)
     newest = d / "gen_0001" / "train" / SNAPSHOTS / snaps[-1] / RESUME_STATE
     newest.write_bytes(newest.read_bytes()[:100])   # truncated
-    with pytest.raises(RuntimeError, match=f"snapshot {snaps[-1]}: {RESUME_STATE} unreadable"):
+    with pytest.raises(RuntimeError, match=f"snapshot {snaps[-1]}: {RESUME_STATE} could not be restored"):
         _train(run, d, s)
     assert _snaps(d) == snaps
     assert newest.stat().st_size == 100
