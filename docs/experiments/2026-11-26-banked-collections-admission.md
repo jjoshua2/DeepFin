@@ -9,11 +9,13 @@ Every check is CPU-only and read-only on the banks.
 - the census script `admission_census.py` [`df56474d`] and its output `census.json` [`318a05e2`] (revision 2 removed
   a self-check that could not fail; the re-run output is byte-identical);
 - the stock-reader check `reader_check.py` [`eefbfbd1`] and its output `reader_check.json` [`506aef15`];
-- the every-row content check `bank_check.py` (the statistics reviewer's, re-run into this directory as
-  `bank_check/<bank>.npz.json`) and the cross-bank / reference comparison `cross.py` + `ref_keys.py` →
-  `bank_check/cross.out` (E6, below). **Re-run pending:** it starts when the coordinator's current GPU/CPU hold
-  clears, and its stamps replace this line. Until then E6 cites the reviewer's own run, `RC/review-1523/`
-  (`bank_check.py` [`bfc78db3`], `cross_and_control.out` [`7c9ee145`]).
+- the every-row content check, the statistics reviewer's scripts re-run into `bank_check/` (E6):
+  - driver `run.sh` [`5593b9a4`], running `bank_check.py` [`bfc78db3`] per bank, then `ref_keys.py` [`46237d68`],
+    `cross.py` [`19c256cf`] and `control.py` [`642c042e`] (the positive control, its directory argument
+    re-pointed);
+  - outputs: `gen2.npz.json` [`bacf27d2`], `succ_pilot.npz.json` [`2940cff1`], `succ_cont.npz.json` [`f7d24009`],
+    `fresh_indep.npz.json` [`8d0a6db8`], `b01_r2.npz.json` [`f13340b2`], `cross.out` [`9c61e104`];
+  - each bank's summary is identical to the reviewer's own run (`RC/review-1523/`).
 
 The owner's rules this record applies:
 - reuse compatible banked games rather than generating fresh ones per test;
