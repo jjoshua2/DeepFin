@@ -86,6 +86,14 @@ routed by `tests/conftest.py` to a second, one-process phase, reported in
 `cpu-serial.xml`. That is most of the suite's time, so parallelism mainly helps
 the pure-computation files.
 
+CI runs the CPU suite as parallel jobs: `validate.py cpu --shard K/N` runs both
+phases on the test files of shard K only. Every `test_*.py`/`*_test.py` under `tests/`
+belongs to exactly one shard. `tests/ci_file_durations.json` (measured seconds per
+file and phase) only balances the shards; a file it does not list is still assigned,
+at the median. Regenerate it from the uploaded `cpu-test-results-shard-*` artifacts
+with `python scripts/ci_file_durations.py <dir>...` when the shards drift apart. The
+required `test` check is a final job that fails unless every shard passed.
+
 On a pull request, `validate.py cpu` skips script-only test files the PR cannot
 affect, and prints how many it skipped. The change set is the PR's merge commit
 diffed against its first parent; a HEAD that is not a two-parent merge, a push

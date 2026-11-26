@@ -366,7 +366,9 @@ def test_partial_thread_start_unwinds_started_workers(monkeypatch, kind, failed_
             index = int(thread.name.rsplit("-", 1)[1])
             if index == failed_index:
                 if workers:
-                    assert initialized.wait(3), "started worker never reached initialization rendezvous"
+                    # A hang guard, not a speed claim: the first RPG worker of a process imports
+                    # torch._inductor (bootstrap_cudagraph_tls), which takes seconds on a loaded runner.
+                    assert initialized.wait(30), "started worker never reached initialization rendezvous"
                 raise primary
             workers.append(thread)
         return start(thread)
