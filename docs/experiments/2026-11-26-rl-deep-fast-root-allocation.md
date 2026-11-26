@@ -435,3 +435,28 @@ data-volume guard with the stage name `stage0` and the full-width scan v7 (`~/ch
 - **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/test/harness_correct_run.sh`: fake HOME, fake nvidia-smi, `fake_collect.py`
   in place of the network; the real scan, launchers, gates, `steady_rate` and report) runs once the GPU is free of
   the data-volume control; its result is reported on the PR.
+
+### Stage 1 readout (2026-11-26): W80 PROCEED
+
+**Disclosure:** this read ran after a non-author GO on this addendum (PR #1535 at `5463f6f7e`, bank
+`~/chess-artifacts/operations/rl-deep-fast/SHA256SUMS` [`7945de9c`]) but before the addendum merged. It ran on CPU only (numpy; torch imports blocked; nice 15, ≤ 4
+threads) with the reviewed scorer `~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_score.py` [`708bf777`]
+on `~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_bank_W80.npz` [`96ebcf0e`], unchanged.
+Outputs: `~/chess-artifacts/operations/rl-deep-fast/stage1/scores/scores.json` [`6122f85a`], `.../per_row.npz`
+[`c7ba0366`], the mechanical verdict `.../verdict.json` [`1bb4d461`] from
+`~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_decide.py` [`f0b300f2`], and the report-only intervals
+`~/chess-artifacts/operations/rl-deep-fast/stage1/scores/fragility.out` [`13b9348f`].
+
+| Step | W80 − R64n, paired over 2,433 rows (190 games) | Rule | Result |
+|---|---|---|---|
+| 1. Coverage | mass on moves deep SF did not score: +0.0036 [+0.0019, +0.0055] | ≤ +0.01 | passes |
+| 2. Kill | `exp_cp_lb`: +0.315 cp [−1.502, +2.246] | STOP iff LB95 > 0 and est > +1.2 | not fired |
+| Verdict | | | **PROCEED** to Stage 2 |
+
+- **Report-only tail:** 28 rows with |d| > 100 cp carry +780.9 of the +765.5 cp-row total; the median per-row
+  difference is −0.0009 cp. Leaving out the single largest game gives −0.138 [−1.853, +1.673]; dropping the two
+  largest gives −0.578 [−2.114, +0.881]. The estimate is 0.885 cp below the threshold.
+- **Report-only secondaries (paired):** Ceres expected loss −0.0013 [−0.0028, +0.0001]; Ceres top-1 +0.0058
+  [−0.0052, +0.0166]; p(best) −0.0036 [−0.0084, +0.0014]; top-1 best +0.0016 [−0.0082, +0.0113].
+- It licenses only this: W80's deep-ply policy target is not worse than R64n's by more than seed noise on deep SF
+  8M. It says nothing about the allocation or about strength; only Stage 2 tests those.
