@@ -259,7 +259,11 @@ def main() -> None:
     parser.add_argument("--sf-multipv", type=int, default=0)
     parser.add_argument("--sf-nice", type=int, default=19)
     parser.add_argument("--timeout-s", type=float, default=900.0)
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(parser)
     args = parser.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("bench_production_sf_workers", allow_reason=args.allow_busy_gpu, device=None)
     mp.set_start_method("spawn", force=True)
 
     source = Path(args.publish_dir).resolve()

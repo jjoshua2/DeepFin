@@ -21,14 +21,22 @@ CHECKPOINT=""
 DEVICES=""
 NODES="${NODES:-20000}"
 REPEATS="${REPEATS:-2}"
+ALLOW_BUSY=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --checkpoint) CHECKPOINT="$2"; shift 2;;
     --devices)    DEVICES="$2"; shift 2;;
+    --allow-busy-gpu)
+      [ $# -ge 2 ] || { echo "--allow-busy-gpu needs a REASON" >&2; exit 2; }
+      ALLOW_BUSY=(--allow-busy-gpu "$2"); shift 2;;
     *) echo "unknown arg: $1"; exit 2;;
   esac
 done
 [ -n "$CHECKPOINT" ] && [ -f "$CHECKPOINT" ] || { echo "--checkpoint /path/to/trainer.pt is required"; exit 2; }
+# GPU launch gate (docs/operations.md "GPU launch gate"): refuse beside a running GPU job unless
+# --allow-busy-gpu "<reason>" is given. Gated once here; the bench children pass as "OK inherited".
+_gate=$(bash scripts/gpu_gate.sh --tool tcec_autotune --for-pid $$ ${ALLOW_BUSY[@]+"${ALLOW_BUSY[@]}"}) || exit $?
+[ -z "$_gate" ] || export "$_gate"
 
 OUT="tcec_autotune_$(date '+%Y%m%d_%H%M').log"
 say() { echo "[autotune $(date '+%H:%M:%S')] $*" | tee -a "$OUT"; }

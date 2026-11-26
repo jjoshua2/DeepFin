@@ -97,7 +97,7 @@ def check_complete(record: dict[str, Any], out: Path) -> dict[str, Any]:
 def _child_env() -> dict[str, str]:
     import os
 
-    env = dict(os.environ)
+    env = dict(os.environ)  # carries CAE_GPU_GATE_PASSED from the driver's gate (scripts/simple_rl_loop.py run)
     env["PYTHONPATH"] = str(REPO_ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     return env
 

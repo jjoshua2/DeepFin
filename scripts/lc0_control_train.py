@@ -2094,7 +2094,11 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-packed-zarr", action="store_true",
         help="allow immutable ordinary .zarr.zip shards in game_epoch mode; overlays are unsupported",
     )
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(parser)
     args = parser.parse_args(argv)
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("lc0_control_train", allow_reason=args.allow_busy_gpu, device=args.device)
     if args.resume_checkpoint is not None:
         if (
             args.sampling_mode != "game_epoch"

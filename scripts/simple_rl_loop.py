@@ -535,6 +535,11 @@ def cmd_run(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    # GPU launch gate (docs/operations.md). `run` trains in-process and then starts the gated
+    # arena_standard.py: the pass exports CAE_GPU_GATE_PASSED=<this pid>:simple_rl_loop, which
+    # _child_env() carries to the arena so it does not refuse the GPU memory this driver holds.
+    from chess_anti_engine.utils.gpu_gate import require_gpu_idle
+    require_gpu_idle("simple_rl_loop", allow_reason=a.allow_busy_gpu, device=a.device)
     # Validate BEFORE creating anything: a refused setting leaves no run dir behind.
     validate_before_pinning(a, run_dir, {"collect", "train"} | run_stages_left(a, run_dir))
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -901,6 +906,8 @@ def parser() -> argparse.ArgumentParser:
     _common(r)
     r.add_argument("--generations", type=int, required=True)
     r.add_argument("--allow-config-change", action="store_true")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument
+    add_allow_busy_gpu_argument(r)
     return p
 
 

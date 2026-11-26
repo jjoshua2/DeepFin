@@ -468,7 +468,11 @@ def main() -> int:
     p.add_argument("--compile-cache-dir", default=None,
                    help="UCI TorchInductor/Triton cache root")
     p.set_defaults(compile=True)
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(p)
     args = p.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("bench_uci_engine", allow_reason=args.allow_busy_gpu, device=None if args.devices else args.device)
 
     def cache_values() -> tuple[int, ...]:
         if not args.cache_sweep:

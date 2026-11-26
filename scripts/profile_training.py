@@ -68,7 +68,11 @@ def main() -> None:
     ap.add_argument("--swa-freq", type=int, default=5)
     ap.add_argument("--prefetch", action="store_true", default=True)
     ap.add_argument("--no-prefetch", action="store_true")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(ap)
     args = ap.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("profile_training", allow_reason=args.allow_busy_gpu, device=None)
 
     use_amp = args.use_amp and not args.no_amp
     prefetch = args.prefetch and not args.no_prefetch
