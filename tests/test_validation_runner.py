@@ -246,6 +246,31 @@ def test_ci_invokes_shared_suites_and_canary_keeps_same_lint_scope() -> None:
                for step in canary["jobs"]["canary"]["steps"])
 
 
+def test_record_only_fast_path_keeps_the_full_suites_as_the_default() -> None:
+    import yaml
+
+    ci: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/ci.yml").read_text())
+    steps = {step.get("name"): step for step in ci["jobs"]["test"]["steps"]}
+    flag = "steps.scope.outputs.records_only"
+    # Full suites run unless the flag is exactly 'true' (unset on any classifier failure).
+    assert steps["Capped local regression"]["if"] == f"{flag} != 'true'"
+    assert steps["Ordinary CPU suite"]["if"] == f"{flag} != 'true'"
+    records = steps["Record-reading tests (record-only pull request)"]
+    assert records["if"] == f"{flag} == 'true'"
+    assert "scripts/validate.py records --require-cpu-wheel" in records["run"]
+    classify = steps["Classify the change"]["run"]
+    assert "'^docs/experiments/[^/]+\\.md$'" in classify
+    assert '[ "$n" -gt 0 ] && [ "$other" -eq 0 ]' in classify
+    assert "previous_filename" in classify
+
+
+def test_every_test_that_reads_the_records_is_in_the_records_suite() -> None:
+    readers = {f"tests/{path.name}" for path in (validate.ROOT / "tests").glob("test_*.py")
+               if "docs/experiments" in path.read_text()}
+    assert readers <= set(validate.RECORD_TESTS), sorted(readers - set(validate.RECORD_TESTS))
+    assert validate.suite_command("records")[-len(validate.RECORD_TESTS):] == list(validate.RECORD_TESTS)
+
+
 def test_only_the_cpu_suite_is_spread_across_processes() -> None:
     assert validate.parallel_args("cpu", "auto") == ["-n", "auto", "--dist", "loadfile"]
     assert validate.parallel_args("cpu", "3") == ["-n", "3", "--dist", "loadfile"]
