@@ -32,7 +32,7 @@ import math
 import shutil
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -214,6 +214,22 @@ class TrainSettings:
     # `sibling_rows` rows of each batch that carry pairs present all their pairs.
     w_sibling: float = 0.0
     sibling_rows: int = 128
+    # The term's pairs are forwarded at most `sibling_chunk_pairs` at a time, each chunk with its own backward
+    # inside the penalty hook (sibling.py): peak memory = the root batch + one chunk. Gradient-equivalent at any
+    # value (float summation order only); there is no unchunked path. Default 64: on the 5090, peak reserved
+    # = 16.95 + 0.0574 GiB per pair in one graph (operator diagnostic 2026-11-22, rows 0/16/32/64), so a 64-pair
+    # chunk adds ~3.7 GiB; 128 rows (~255 pairs) in one graph needed ~31.6 of 31.8 GiB.
+    sibling_chunk_pairs: int = 64
+    # The term's loss form (sibling.py): "diff" regresses dv onto dq (Huber_0.2; the registered form); "order" is
+    # the margin ranking loss relu(min(sibling_order_margin, |dq|) - sign(dq) * dv) on pairs with
+    # |dq| >= sibling_order_min_dq, weighted by min_visits / 64 (the cap at |dq| is part of the form). Margin and threshold are read only with "order", and must then be given.
+    sibling_loss: str = "diff"
+    # The term's unit: "pairs" (the K sampled pairs per row of the version-2 sidecar) or "roots" (the root-list
+    # sidecar: every pair among each root's >= min-visits children, per-root mean, n_eff-weighted over roots; order
+    # form only). With "roots", sibling_rows is the number of ROOTS per batch.
+    sibling_unit: str = "pairs"
+    sibling_order_margin: float | None = None
+    sibling_order_min_dq: float | None = None
     sibling_dir: str | None = None
 
     def effective_batch(self) -> int:
@@ -335,15 +351,34 @@ class TrainSettings:
         if not math.isfinite(w) or w < 0:
             raise ValueError(f"w_sibling must be a finite value >= 0, got {self.w_sibling}")
         if w == 0:
-            if self.sibling_dir is not None or int(self.sibling_rows) != 128:
-                raise ValueError("sibling_dir / sibling_rows are read only with w_sibling > 0; with w_sibling 0 "
-                                 "they would be ignored")
+            if (self.sibling_dir is not None or int(self.sibling_rows) != 128 or int(self.sibling_chunk_pairs) != 64
+                    or self.sibling_loss != "diff" or self.sibling_unit != "pairs" or self.sibling_order_margin is not None
+                    or self.sibling_order_min_dq is not None):
+                raise ValueError("sibling_dir / sibling_rows / sibling_chunk_pairs / sibling_loss / sibling_order_* "
+                                 "are read only with w_sibling > 0; with w_sibling 0 they would be ignored")
             return
         if not self.sibling_dir:
             raise ValueError("w_sibling > 0 needs sibling_dir (the materialised pair sidecars, "
                              "scripts/simple_rl_sibling_pairs.py)")
         if not 1 <= int(self.sibling_rows) <= int(self.batch_size):
             raise ValueError(f"sibling_rows must be in [1, batch_size {self.batch_size}], got {self.sibling_rows}")
+        if int(self.sibling_chunk_pairs) < 1:
+            raise ValueError(f"sibling_chunk_pairs must be >= 1, got {self.sibling_chunk_pairs}")
+        if self.sibling_unit not in ("pairs", "roots"):
+            raise ValueError(f"sibling_unit must be 'pairs' or 'roots', got {self.sibling_unit!r}")
+        if self.sibling_unit == "roots" and self.sibling_loss != "order":
+            raise ValueError("sibling_unit 'roots' trains the order form only (sibling_loss 'order')")
+        if self.sibling_loss not in ("diff", "order"):
+            raise ValueError(f"sibling_loss must be 'diff' or 'order', got {self.sibling_loss!r}")
+        if self.sibling_loss == "order":
+            m, t = self.sibling_order_margin, self.sibling_order_min_dq
+            if m is None or not math.isfinite(float(m)) or float(m) < 0:
+                raise ValueError(f"sibling_loss 'order' needs a finite sibling_order_margin >= 0, got {m}")
+            if t is None or not math.isfinite(float(t)) or float(t) <= 0:
+                raise ValueError(f"sibling_loss 'order' needs a finite sibling_order_min_dq > 0, got {t}")
+        elif self.sibling_order_margin is not None or self.sibling_order_min_dq is not None:
+            raise ValueError("sibling_order_margin / sibling_order_min_dq are read only with sibling_loss 'order'; "
+                             "with 'diff' they would be ignored")
         if int(self.accum_steps) != 1:
             # Same reason as the KL anchor: the term is a per-micro-batch mean
             # added through the Trainer's penalty hook.
@@ -1700,30 +1735,64 @@ def write_snapshot(*, out_dir: Path, update: int, trainer: Any, arch: dict[str, 
 _ANCHOR_COUNTERS = ("rows", "forwards", "policy_kl_sum", "wdl_kl_sum")
 
 
-def resumable_snapshot(out_dir: Path, resume_key: str) -> int | None:
+def resumable_snapshot(out_dir: Path, resume_key: str | list[str]) -> int | None:
     """The newest COMPLETE snapshot of an unsealed attempt with this exact
-    resume key (same settings, inputs and batch plan) whose resume files are
-    still present; None when the phase must start from its first update."""
+    resume key (same settings, inputs and batch plan; or any of a list of keys)
+    whose resume files are still present; None when the phase must start from
+    its first update."""
+    keys = {resume_key} if isinstance(resume_key, str) else set(resume_key)
     best = None
     for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
         rec = d / SNAPSHOT_RECORD
         if not (rec.is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
             continue
         data = json.loads(rec.read_text())
-        if data.get("resume_key") == resume_key and (best is None or int(data["update"]) > best):
+        if data.get("resume_key") in keys and (best is None or int(data["update"]) > best):
             best = int(data["update"])
     return best
+
+
+_STATE_KEYS = ("cursor", "served", "served_sl", "drawn_rows", "realised_sl_rows", "sampler_rng", "rng", "chunks")
+
+
+def _unreadable(d: Path, name: str, err: BaseException) -> RuntimeError:
+    """The refusal for a snapshot file that cannot be read back: named, never a bare traceback, nothing deleted.
+
+    The wording says "could not be restored" and carries the exception, because the cause is not always damage: the
+    ``resume_trainer.pt`` wrapper also catches a genuine code incompatibility in ``Trainer.load`` (e.g. an optimizer
+    group mismatch after a code change)."""
+    return RuntimeError(
+        f"snapshot {d.name}: {name} could not be restored ({type(err).__name__}: {err}); it may be unreadable, not a "
+        f"snapshot state, or incompatible with this code. This code will not delete it. Move {d} aside (or the whole "
+        f"{d.parent}) to start the phase over")
+
+
+def load_resume_state(d: Path) -> dict[str, Any]:
+    """``resume_state.pt`` of snapshot ``d``, checked to be a snapshot state (a dict with the sampler / rng fields)."""
+    import torch
+
+    try:
+        state = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False)
+        if not isinstance(state, dict):   # a str / list / tuple / set may CONTAIN the names; `in` alone would pass it
+            raise TypeError(f"not a snapshot state: a {type(state).__name__}, not a dict")
+        missing = [k for k in _STATE_KEYS if k not in state]
+        if missing:
+            raise KeyError(f"missing {missing}")
+    except Exception as e:   # any unreadable file: refuse with a message, never delete
+        raise _unreadable(d, RESUME_STATE, e) from e
+    return state
 
 
 def resume_from_snapshot(out_dir: Path, update: int, *, trainer: Any, sampler: ScheduledSampler,
                          anchor: ReferenceAnchor | None, sibling: Any = None) -> list[dict[str, Any]]:
     """Restore the phase's whole state as it was when ``step_<update>`` was
     written; returns the trainer metrics of the chunks already trained."""
-    import torch
-
     d = snapshot_dir(out_dir, update)
-    trainer.load(d / RESUME_TRAINER, exact_resume=True)
-    state = torch.load(str(d / RESUME_STATE), map_location="cpu", weights_only=False)
+    state = load_resume_state(d)
+    try:
+        trainer.load(d / RESUME_TRAINER, exact_resume=True)
+    except Exception as e:   # any unreadable file: refuse with a message, never delete
+        raise _unreadable(d, RESUME_TRAINER, e) from e
     sampler.cursor = int(state["cursor"])
     sampler.served = list(state["served"])
     sampler.served_sl = list(state["served_sl"])
@@ -1751,6 +1820,38 @@ def merged_losses(chunks: list[dict[str, Any]]) -> dict[str, float]:
         if all(k in c for c in chunks) and total > 0:
             out[k] = float(sum(float(c[k]) * r for c, r in zip(chunks, rows, strict=True)) / total)
     return out
+
+
+def build_sibling_term(settings: TrainSettings, *, trainer: Any, sampler: Any, run_dir: Path, gens: list[int],
+                       row_ids: np.ndarray, generation: int) -> tuple[Any, Any]:
+    """The sibling term exactly as a phase trains it, and its sidecar: the one constructor for
+    ``train_generation`` and for any probe that must measure the term a cell runs (memory smoke, cost
+    probe, step-0 gradient scale), so a probe cannot build a different term from the cell's settings."""
+    import torch
+
+    from chess_anti_engine.simple_rl.sibling import SiblingListTerm, SiblingTerm, load_sidecars
+
+    if float(settings.w_sibling) <= 0:
+        raise ValueError("build_sibling_term needs w_sibling > 0")
+    if not isinstance(sampler, ScheduledSampler):
+        raise ValueError("w_sibling > 0 needs the exact-once ScheduledSampler")
+    assert settings.sibling_dir is not None  # validate()
+    sidecar = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
+                            holdout_frac=float(settings.holdout_frac), newest=generation, unit=settings.sibling_unit)
+    scaler_cls = getattr(torch.amp, "GradScaler", None)
+    if scaler_cls is not None and any(isinstance(v, scaler_cls) and v.is_enabled() for v in vars(trainer).values()):
+        raise ValueError("w_sibling > 0 with an active GradScaler is refused: the term's per-chunk backward runs "
+                         "inside the penalty hook, unscaled")
+    if float(getattr(trainer, "resid_channel_dropout", 0.0)) > 0 or float(
+            getattr(trainer, "resid_channel_balance_weight", 0.0)) > 0:
+        raise ValueError("w_sibling > 0 with residual channel dropout or channel balance is refused: each chunk's "
+                         "forward would draw its own dropout mask / overwrite the root forward's balance loss")
+    term_cls = SiblingListTerm if settings.sibling_unit == "roots" else SiblingTerm
+    term = term_cls(trainer.model, sampler, sidecar, w=float(settings.w_sibling),
+                    rows=int(settings.sibling_rows), chunk_pairs=int(settings.sibling_chunk_pairs),
+                    batch_size=int(settings.batch_size), device=settings.device, loss=settings.sibling_loss,
+                    order_margin=settings.sibling_order_margin, order_min_dq=settings.sibling_order_min_dq)
+    return term, sidecar
 
 
 def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
@@ -1892,15 +1993,8 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
     sibling_pairs: Any = None
     sibling_probe_before: dict[str, Any] | None = None
     if float(settings.w_sibling) > 0:
-        from chess_anti_engine.simple_rl.sibling import SiblingTerm, load_sidecars
-
-        if not isinstance(sampler, ScheduledSampler):
-            raise ValueError("w_sibling > 0 needs the exact-once ScheduledSampler")
-        assert settings.sibling_dir is not None  # validate()
-        sibling_pairs = load_sidecars(run_dir, gens, row_ids, Path(settings.sibling_dir),
-                                      holdout_frac=float(settings.holdout_frac), newest=generation)
-        sibling = SiblingTerm(trainer.model, sampler, sibling_pairs, w=float(settings.w_sibling),
-                              rows=int(settings.sibling_rows), device=settings.device)
+        sibling, sibling_pairs = build_sibling_term(settings, trainer=trainer, sampler=sampler, run_dir=run_dir,
+                                                    gens=gens, row_ids=row_ids, generation=generation)
         sibling_probe_before = sibling.probe_abs_resid()
     if anchor is not None and sibling is not None:
         from chess_anti_engine.simple_rl.sibling import PenaltyChain
@@ -1941,7 +2035,42 @@ def train_generation(*, run_dir: Path, generation: int, init_checkpoint: Path,
         resume_key = snapshot_resume_key(settings=settings, generation=generation, init_checkpoint=init_checkpoint,
                                          prev_trainer_checkpoint=prev_trainer_checkpoint if continued else None,
                                          run_dir=run_dir, gens=gens, probe_path=probe_path, batches=sampler.batches)
-        resumed_from = resumable_snapshot(out_dir, resume_key)
+        key_kw: dict[str, Any] = {"settings": settings, "generation": generation, "init_checkpoint": init_checkpoint,
+                                  "prev_trainer_checkpoint": prev_trainer_checkpoint if continued else None,
+                                  "run_dir": run_dir, "gens": gens, "probe_path": probe_path,
+                                  "batches": sampler.batches}
+        states = snapshot_sibling_states(out_dir) if float(settings.w_sibling) > 0 else {}
+        legacy = {u: st for u, st in states.items() if "chunk_segments" not in st}
+        compatible, incompatible = legacy_resume_keys(
+            chunks=sorted({int(st["chunk_pairs"]) for st in legacy.values() if "chunk_pairs" in st}), **key_kw)
+        resumed_from = resumable_snapshot(out_dir, [resume_key, *compatible])
+        if resumed_from is None and incompatible:
+            old = resumable_snapshot(out_dir, incompatible)
+            if old is not None:   # refuse rather than delete a phase's snapshots under a changed definition
+                raise RuntimeError(
+                    f"{out_dir}: snapshot step_{old} was written by this phase under the sibling ORDER form version 1 "
+                    f"(this code trains version {_order_form_version()}); it cannot resume, and this "
+                    f"code will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over under "
+                    f"version {_order_form_version()}, or finish it with the code that wrote it")
+        other_form = {u: st.get("order_form_version") for u, st in states.items() if "chunk_segments" in st
+                      and st.get("loss") == "order" and st.get("order_form_version") != _order_form_version()}
+        if resumed_from is None and other_form:
+            # This code's own state under an earlier ORDER form version (its key carries the version, so it matches
+            # nothing now): refused, never deleted.
+            old = min(other_form)
+            raise RuntimeError(
+                f"{out_dir}: snapshot step_{old} was written by this phase under the sibling ORDER form version "
+                f"{other_form[old]} (this code trains version {_order_form_version()}); it cannot resume, and this "
+                f"code will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over, or finish "
+                "it with the code that wrote it")
+        if resumed_from is None and legacy:
+            # A #1501-era sibling snapshot that matches no key this code can rebuild: never deleted.
+            raise RuntimeError(
+                f"{out_dir}: snapshot step_{min(legacy)} carries a #1501-era sibling state that this phase cannot "
+                f"resume (its key matches none rebuilt for these settings at chunk sizes "
+                f"{sorted({int(st['chunk_pairs']) for st in legacy.values() if 'chunk_pairs' in st})}), and this code "
+                f"will not delete it. Move {Path(out_dir, SNAPSHOTS)} aside to start the phase over, or finish it "
+                "with the code that wrote it")
         for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
             # Stale (another attempt's plan) or past the resume point (never completed): redone.
             if resumed_from is None or int(d.name.split("_")[1]) > resumed_from:
@@ -2118,18 +2247,85 @@ def _rows_per_step(sampler: Any, accum_steps: int) -> dict[str, Any] | None:
     return {"steps": len(per), "min": min(per), "max": max(per), "rows": sum(per)}
 
 
+# Settings added after snapshots existed, dropped from the resume key at their default so an unsealed phase begun on
+# older code (which trained exactly the default) still resumes; any other value is keyed.
+KEY_NEUTRAL_DEFAULTS: dict[str, Any] = {"sibling_loss": "diff", "sibling_order_margin": None,
+                                        "sibling_order_min_dq": None, "sibling_unit": "pairs"}
+# Settings that never enter the key: they change memory, not the update (gradient-equivalent up to float summation
+# order), so a phase may resume under another value -- the natural out-of-memory recovery. The term records each
+# value per segment in its own state and summary.
+KEY_EXCLUDED: tuple[str, ...] = ("sibling_chunk_pairs",)
+
+
+def _order_form_version() -> int:
+    from chess_anti_engine.simple_rl.sibling import ORDER_FORM_VERSION
+
+    return ORDER_FORM_VERSION
+
+
+def legacy_snapshot_states(out_dir: Path) -> dict[int, dict[str, Any]]:
+    """The sibling state of every snapshot with resume files that the #1501-era code
+    wrote (its state has no ``chunk_segments``), by update. That code keyed a
+    non-default chunk size and recorded it here (``chunk_pairs``), so its key can be
+    rebuilt at the chunk the phase actually ran, whatever chunk resumes it."""
+    return {u: st for u, st in snapshot_sibling_states(out_dir).items() if "chunk_segments" not in st}
+
+
+def snapshot_sibling_states(out_dir: Path) -> dict[int, dict[str, Any]]:
+    """The sibling state of every snapshot with resume files, by update."""
+    out: dict[int, dict[str, Any]] = {}
+    for d in Path(out_dir, SNAPSHOTS).glob("step_*"):
+        if not ((d / SNAPSHOT_RECORD).is_file() and (d / RESUME_TRAINER).is_file() and (d / RESUME_STATE).is_file()):
+            continue
+        st = load_resume_state(d).get("sibling")
+        if isinstance(st, dict):
+            out[int(d.name.split("_")[1])] = st
+    return out
+
+
+def legacy_resume_keys(*, chunks: list[int] | tuple[int, ...] = (), **kw: Any) -> tuple[list[str], list[str]]:
+    """Keys the #1501-era code wrote for this same phase, rebuilt at this phase's
+    chunk size and at every chunk size in ``chunks`` (those recorded by the
+    #1501-era snapshots on disk, ``legacy_snapshot_states``): that code keyed a
+    non-default ``--sibling-chunk-pairs``. COMPATIBLE (resumed): a ``diff`` phase,
+    at any chunk (chunking is gradient-equivalent). INCOMPATIBLE (refused, never
+    deleted): an ``order`` phase written under form version 1 (no version field in
+    its key), at any chunk."""
+    s: TrainSettings = kw.pop("settings")
+    if float(s.w_sibling) <= 0:
+        return [], []
+    compatible: list[str] = []
+    incompatible: list[str] = []
+    for c in sorted({int(s.sibling_chunk_pairs), *(int(x) for x in chunks)}):
+        sc = replace(s, sibling_chunk_pairs=c)
+        if s.sibling_loss == "order":
+            incompatible.append(snapshot_resume_key(settings=sc, **kw, order_form=False, key_chunk=c != 64))
+        elif c != 64:   # at 64 the #1501-era diff key is this code's own key
+            compatible.append(snapshot_resume_key(settings=sc, **kw, key_chunk=True))
+    return compatible, incompatible
+
+
 def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkpoint: Path,
                         prev_trainer_checkpoint: Path | None, run_dir: Path, gens: list[int], probe_path: Path,
-                        batches: list[tuple[np.ndarray, np.ndarray]]) -> str:
+                        batches: list[tuple[np.ndarray, np.ndarray]], order_form: bool = True,
+                        key_chunk: bool = False) -> str:
     """Identity of one phase attempt: a snapshot resumes only an attempt with
-    the same settings, inputs (by sha256) and batch plan."""
+    the same settings, inputs (by sha256) and batch plan. ``order_form=False`` /
+    ``key_chunk=True`` rebuild the #1501-era keys (``legacy_resume_keys``)."""
     h = hashlib.sha256()
     for own, sl in batches:
         h.update(np.ascontiguousarray(own, dtype=np.int64).tobytes())
         h.update(b"|")
         h.update(np.ascontiguousarray(sl, dtype=np.int64).tobytes())
         h.update(b"\n")
-    ident = {"settings": asdict(settings), "generation": int(generation),
+    keyed = asdict(settings)
+    for k, default in KEY_NEUTRAL_DEFAULTS.items():
+        if k in keyed and keyed[k] == default:
+            del keyed[k]
+    for k in KEY_EXCLUDED:
+        if not (key_chunk and k == "sibling_chunk_pairs"):
+            keyed.pop(k, None)
+    ident = {"settings": keyed, "generation": int(generation),
              "init": sha256_file(init_checkpoint),
              "prev": None if prev_trainer_checkpoint is None else sha256_file(prev_trainer_checkpoint),
              "collects": {g: sha256_file(Path(run_dir) / f"gen_{g:04d}" / "collect" / "manifest.json") for g in gens},
@@ -2140,6 +2336,12 @@ def snapshot_resume_key(*, settings: TrainSettings, generation: int, init_checkp
         # default key is unchanged.
         from chess_anti_engine.simple_rl.sibling import SIDECAR_MANIFEST
 
+        if settings.sibling_loss == "order" and order_form:
+            # The order form's definition changed (version 2: gap-weighted); a phase begun on another version
+            # never resumes as this one.
+            from chess_anti_engine.simple_rl.sibling import ORDER_FORM_VERSION
+
+            ident["sibling_order_form"] = ORDER_FORM_VERSION
         ident["sibling_sidecars"] = {g: sha256_file(Path(str(settings.sibling_dir)) / f"gen_{g:04d}" / SIDECAR_MANIFEST)
                                      for g in gens}
     return hashlib.sha256(json.dumps(ident, sort_keys=True, default=str).encode()).hexdigest()

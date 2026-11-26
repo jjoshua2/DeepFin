@@ -555,15 +555,48 @@ the next stage boundary, and the driver still refuses to START a stage while a
 pause marker exists.
 
 GPU memory: at the start the collect refuses, and never silently steps K down,
-when K × 1.10 × max(48 MiB per sim + 1.11 MiB per leaf row, 2.006 MiB per leaf row
-− 4348 MiB) exceeds the usable memory, min(free, 83% of the card). The first term is
-a least-squares fit to the multi-process and ≤ 256-game peaks (within −8% / +9% of
-each); above ~8k leaf rows in one process the peak grows faster (64 sims, 1 × 512
-peaked at 29.9 GB, 25% above the line), which the second term, through 1 × 256 and
-1 × 512, covers. When no process count fits, the refusal says to lower
-`--concurrency`. The usable limit is measured: 8 × 96 at
-16 sims peaked at 31.0 GB of 32 and ran 22% slower than 6 × 96 at 25.9 GB, which ran
-at full speed.
+when K × 1.10 × the charge per process exceeds the usable memory, min(free, 83% of
+the card). The charge is fitted on chunked collects (PR #1511), at 3 × 128 games and
+64 sims. Per process it is (peak − idle) / 3, taking the largest arm at each forward
+size. Forward rows are min(leaf buffer, `--eval-chunk-rows`).
+
+| forward rows | knob off | full width, topk 16 | full width, topk 32 | charged (before × 1.10) |
+|---|---|---|---|---|
+| 512 | 2,622 MiB | 2,560 | 2,684 (2,638 at `4943adea2`) | 2,684 |
+| 1,024 | 3,867 | — | 4,291 | 4,291 |
+| 2,048 | 6,474 | — | 5,838 | 6,474 |
+
+- **Sources:** the N = 512 points are from head `1e3a537f6` (operator bank
+  `chunk_meas_20261122`), the others from `4943adea2` (`chunk_meas2_20261122`).
+- **Fit quality:** predicted / measured is 1.10–1.23 at every point and never below 1.
+- **Between and beyond the points:** the charge is linear between the measured
+  forward sizes. Above 2,048 rows it runs through the unchunked eager points, 4,096
+  rows at 9,061 MiB and 16,384 rows at 28,515. Those are model-level only:
+  `--eval-chunk-rows` above 2,048 is refused.
+- **Leaf buffer:** above the largest measured one (8,192 rows), 0.02 MiB a row is
+  added, about one dense fp32 policy row.
+- **Other sims or games per process:** the charge is scaled by the unchunked line
+  (48 MiB per sim + 35.52 MiB per board, fitted on the 2026-11-20 peaks, within
+  −8% / +9% of each) relative to its value at 64 × 128. Below that point the line
+  itself is a floor, so the 16-sim shapes keep their measured charge: 8 × 64 fits
+  and 8 × 96 is refused.
+- **`extrapolated`:** any shape outside the measured one (another K, sims, games per
+  process, a forward size between the points, a larger leaf buffer, or a (topk, full
+  width) arm other than topk 16 off, topk 16 full width and topk 32 full width) is
+  marked `extrapolated` in `gpu_memory_check`, with `extrapolated_because` listing why,
+  and in the log line. 4 × 128 and 3 × 192 are not measured yet. The record also
+  carries every term of the charge: `knot_mib`, `line_mib`, `line_ratio`,
+  `line_floor_applied`, `forward_rows`, `leaf_rows`, `reserved_row_mib`,
+  `per_proc_mib` and `safety`.
+- **Known limitation: the floor makes the charge non-monotone in sims.** Just below
+  64 × 128 the line floor takes over: 3 × 128 at 63 sims is charged about 24.4 GiB
+  against 8.65 at 64, and 6 × 64 at 64 sims is refused. That is the safe direction.
+  Two GPU points would replace the floor: 3 × 128 at 32 sims, N = 512, and 6 × 64 at
+  64 sims.
+- When no process count fits, the refusal says to lower `--concurrency`.
+- **The usable limit is measured:** 8 × 96 at 16 sims peaked at 31.0 GB of 32 and ran
+  22% slower than 6 × 96 at 25.9 GB, which ran at full speed.
+
 With K > 1 the free memory is read with nvidia-smi, so the driver does not open a
 495 MiB CUDA context. It does this only when the card can be named unambiguously:
 the `CUDA_VISIBLE_DEVICES` entry is a `GPU-` UUID, or the host has a single card,
@@ -613,6 +646,40 @@ GPU and 13% in launching forwards; tablebase probing (8%), the C search (6%),
 Stockfish labels (6%) and encoding (3%) are each small. The GPU is the
 bottleneck there, so moving any one CPU cost into C buys single-digit percent at
 most.
+
+## Forward chunking (`--eval-chunk-rows`)
+
+Peak GPU memory follows the rows of the largest network forward, about
+1.25 MiB per forwarded row per process at 64 sims (from the knob-off 2,048-row and
+full-width 4,096-row peaks, 20.6 vs 28.3 GB at 3 × 128). It does not follow the leaf
+buffer. The full-width root's round 0 hands every unvisited root child of every
+cold game to one call, about 4,500–5,300 rows at the synchronised start. With the
+buffer of a wider topk (8,192 rows at topk 32, 5,376 at topk 21) that went through
+as one eager forward per process, and both 3 × 128 shapes went over the card within
+30 s (operator diagnostics `mem_wide_20261122`, `mem_wide2_20261122`).
+
+The collect evaluator therefore never runs a forward above `--eval-chunk-rows` rows
+(default 512, the CUDA-graph row cap, so every chunk replays a captured graph). A
+larger call runs as consecutive forwards of at most that many rows on the same
+stream, written into one output in row order, with one completion event. The search
+is unchanged: it hands the same leaves, and the leaf buffer, flushes and the 2-group
+pipeline are not touched. Results are equal up to batch-size effects of the kernels
+(CPU fp32: max |Δ| 4.8e-7 policy logit, 1.8e-8 WDL on a 43-row batch chunked at 8).
+`eval_chunk_rows_realised` (the evaluator's forward bound: no forward ran more
+rows) and the `chunked_forwards` / `forward_chunks` counters in `cuda_graph_stats` are
+read off the evaluator the search used. Every entry chunks, sync and async, on CUDA
+and on the CPU.
+
+`--eval-chunk-rows` accepts 1 to 2,048, and is temporary, for the N comparison.
+Chunks above 512 rows (the graph cap) are eager forwards, not graph replays: they
+count in `cuda_graph_stats` `eager_over_max_rows`, which is 0 only at N ≤ 512. The
+GPU memory check is fitted on chunked collects at N = 512, 1,024 and 2,048 (see
+"GPU memory" under Collect processes). Above 2,048 rows it has only unchunked points
+(a 4,096-row forward measured 9,061 MiB per process, and a 5,300-row forward went over
+the card), so a larger value is refused at start, not charged.
+`DirectGPUEvaluator(forward_chunk_rows=...)` defaults to the evaluator's own graph
+cap when graphs are on, and to no bound otherwise, so the eager, compiled-bucket
+(UCI) and compact-legal evaluators are unchanged.
 
 ## Evaluator batch cap
 
@@ -939,7 +1006,64 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
   the parent's POV (`root_child_q`). Code and POV algebra are in
   `chess_anti_engine/simple_rl/sibling.py`; the evidence is the sibling-target
   scoping row in `docs/experiments/2026-11-21-rl-loop-evidence-log.md`.
-  - **Loss:** `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
+  - **Loss form** (`--sibling-loss`, default `diff`).
+    - `diff`: `W · mean over pairs of (min(v_A, v_B) / 64) · Huber_0.2(Δv − dq)`.
+      It regresses the difference, so it enforces the size of the gap as well as
+      its sign.
+    - `order` (form version 3): per pair `(min(v_A, v_B) / 64) · 1[|dq| ≥ t] ·
+      min(|dq|, 0.62) · relu(m_i − sign(dq) · Δv)`, with `m_i = min(m, |dq|)`,
+      `m` = `--sibling-order-margin` and `t` = `--sibling-order-min-dq` (both
+      required with `order`, refused otherwise).
+      - A pair costs nothing, and gives exactly zero gradient, once the net orders it
+        as the search does by at least `m_i`. Near-ties (`|dq| < t`) never
+        contribute.
+      - **The cap `m_i ≤ |dq|` is part of the form, with no flag to remove it:** the
+        loss never asks the net to separate a pair by more than the search itself
+        does, so it adds no sharpening pressure without a target behind it.
+      - **The gap weight `min(|dq|, 0.62)` is part of the form too:** preferring the
+        wrong child costs the value given up, so a mis-ordered large gap costs more
+        than a small one. It is bounded at the v2 pilot sidecar's weighted p90 of
+        |dq| (0.619), so decided gaps do not dominate.
+      - Version 1, unweighted, was never registered. Version 2 weighted roots
+        (list unit) with ρ 0.13; version 3 uses 0.08 (below). The pair unit's loss
+        is the same in versions 2 and 3. The term's snapshot state and the phase
+        resume key carry the form's version, so a phase begun under another version
+        never resumes: its snapshots are refused with a message naming them, never
+        deleted (move `snapshots/` aside to start over).
+      - The term goes quiet as pairs are satisfied. The summary's `active_pairs`
+        counts pairs with a non-zero loss.
+    - **Unit** (`--sibling-unit`, default `pairs`; `roots` needs `order`).
+      - `pairs`: the K sampled pairs per row of the version-2 pair sidecar, averaged
+        over the step's pairs.
+      - `roots`: a root-list sidecar, made with `scripts/simple_rl_sibling_pairs.py
+        --unit roots`, holds every eligible child (≥ `--min-visits` visits, not
+        search-terminal) of every root with at least two of them, one input each.
+        The term takes the first `--sibling-rows` ROOTS of the batch, forwards each
+        child once, and scores EVERY pair among a root's children with `|dq| ≥ t`.
+        Each root's loss is the mean over its eligible pairs. Roots are combined with
+        weight `n_eff = n / (1 + (n − 1) · 0.08)` (n = the root's eligible pairs),
+        normalised over the step's roots. `0.08` is the within-root pair correlation
+        measured on full root lists (pre-registered; 0.0782 [0.0681, 0.0924] over
+        66,334 roots, the SL base). It replaced 0.13, the within-row correlation of
+        K = 2 sampled pairs, which lay outside that interval (order form version 3).
+        It is fixed and not refitted, and one value serves every n although the
+        measured correlation varies with n (0.19 at 2–5 pairs, 0.06 at 16–30).
+      - Chunks hold whole roots (pairs never cross roots), at most `2 ×
+        --sibling-chunk-pairs` child positions unless one root is larger.
+      - Use `--min-visits 2` or more: a pair with a 1-visit child carries no ordering
+        information beyond the collecting net's own (the order-scoping bank's
+        addendum).
+    - Both units record `child_positions_per_step`, the mean child inputs forwarded
+      with gradient per step that carries the term, so "equal child-forward budget"
+      across cells is a checked quantity.
+  - **Chunks** (`--sibling-chunk-pairs`, default 64). The step's pairs are forwarded
+    at most this many at a time, with a backward per chunk inside the Trainer's
+    penalty hook, scaled by the Trainer's own `rows / batch_size` factor. The chunks
+    sum to the one-forward term (float summation order only), and peak memory is the
+    root graph plus one chunk. On the 5090, peak reserved ≈ 16.95 + 0.0574 GiB per
+    pair in one graph, so 128 rows (≈ 255 pairs) in one graph did not fit. The hook
+    refuses uncleared gradients, a GradScaler, residual channel dropout or balance,
+    and a sampler whose loss scale it cannot reproduce.
     The child value is `v = L − W` of the child's own WDL softmax, because the
     child's side to move is the parent's opponent. Both children go through the
     SAME net in the same step, in train mode. Train mode changes no output here:
@@ -1015,22 +1139,59 @@ instead of asking Stockfish. Without `--syzygy` a ply-cap game is scored a draw.
     - Refused with `--accum-steps > 1` (the term is a per-micro-batch mean, the
       anchor's reason) and with `--sample-with-replacement` (served rows are not
       recorded).
-    - `--sibling-dir` or a non-default `--sibling-rows` with `--w-sibling 0` is
-      refused, because it would be ignored.
+    - `--sibling-dir`, or a non-default `--sibling-rows`, `--sibling-chunk-pairs`,
+      `--sibling-unit` or `--sibling-loss` / `--sibling-order-*`, with `--w-sibling 0` is refused,
+      because it would be ignored.
   - **Take-effect record.** The train summary's `sibling` block holds:
-    - pairs, steps, the per-step (pairs, loss) log, and the mean weighted Huber;
-    - mean |Δv − dq| on a fixed probe of up to 1,024 hold-out pairs of the newest
-      generation, before and after the phase;
+    - pairs, steps, the per-step (pairs, loss) log and beside it `per_step_detail`
+      (`per_step_detail_fields`: active pairs and child positions forwarded per step;
+      `roots` mode adds the roots trained, i.e. roots with at least one pair at
+      |dq| ≥ t, whereas `--sibling-rows` counts roots that carry a list; steps restored
+      from a snapshot written before the field hold `null`), `mean_weighted_loss` (the
+      form-neutral key: Huber under `diff`, the ranking loss under `order`; in
+      `roots` mode the mean per-step term value), the older `mean_weighted_huber`
+      (kept for diff-era readers; `null` in `roots` mode), the loss form with its
+      margin and threshold, `chunk_pairs` and `chunk_segments`, `active_pairs`,
+      and `child_positions` / `child_positions_per_step` (counted from
+      `child_positions_from_step`: a snapshot from before the field counts from its
+      restore); `roots` mode adds `roots`;
+    - the hold-out probe, before and after the phase. `pairs` mode: up to 1,024
+      hold-out pairs of the newest generation, with mean |Δv − dq| and `sign_agree`
+      (the rate at which the net orders a pair with |dq| ≥ t as the search does).
+      `roots` mode: up to 128 hold-out roots (`probe_roots`), every pair among
+      their children with |dq| ≥ t, with the same two numbers;
     - K, min visits, and every sidecar's manifest and per-file sha256.
     - The manifest's inputs carry `sibling_gen_<g>`.
   - **Snapshot resume.** When the term is on, the resume key also hashes every
     generation's sidecar manifest, so a different sidecar re-materialised at the
-    same `--sibling-dir` restarts the phase instead of resuming. Adding the three
+    same `--sibling-dir` restarts the phase instead of resuming.
+    `--sibling-unit`, `--sibling-loss` and `--sibling-order-*` enter the key only at
+    a non-default value, so adding them did not change any existing key. With
+    `--sibling-loss order` the key also carries the order form's version.
+  - **Snapshots written by the #1501-era code.** That code keyed a non-default
+    `--sibling-chunk-pairs` and recorded the chunk size in the snapshot's sibling
+    state (`chunk_pairs`; its state has no `chunk_segments`, which is how a
+    #1501-era snapshot is recognised). At phase start the trainer reads that state
+    from the newest snapshot that still has its resume files and rebuilds the
+    #1501-era key at the chunk size recorded there and at this run's own:
+    - a `diff` phase resumes exactly when its other settings, inputs and batch
+      plan are unchanged, at ANY chunk size now (chunking is gradient-equivalent;
+      the term's `chunk_segments` start with the recorded size);
+    - an `order` phase written under form version 1 is refused at any chunk size,
+      with a message naming the snapshot; never deleted;
+    - any other #1501-era snapshot (one whose key matches none rebuilt, e.g. the
+      phase's settings changed) is also refused, never deleted.
+    To start such a phase over, move its `snapshots/` aside.
+    `--sibling-chunk-pairs` never enters this code's key: it changes memory, not the update,
+    so an interrupted phase can resume at a smaller chunk (the out-of-memory
+    recovery). The term records each value with the step it started at
+    (`chunk_segments` in its state and summary).
+    Adding the three
     `TrainSettings` fields changes `snapshot_resume_key` itself, so an unsealed
     phase started on older code restarts from its first update.
-  - **Cost (unmeasured on GPU).** At the defaults (128 rows x K 2 = 256 pairs) the
-    term adds 512 child positions, forward and backward, to each 512-row batch.
-    Expect about double the activation memory and step compute.
+  - **Cost.** At the defaults (128 rows x K 2 = 256 pairs) the term adds 512 child
+    positions, forward and backward, to each 512-row batch, in chunks (above). Step
+    time on GPU is unmeasured.
     - It also reads the pairs' inputs from the memory-mapped sidecar on the training
       thread: about 0.19 s of host time per batch (measured by the review on the
       pilot sidecar).

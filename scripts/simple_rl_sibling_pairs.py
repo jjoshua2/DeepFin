@@ -31,7 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--collect", required=True, help="a sealed collect directory (gen_<g>/collect)")
     p.add_argument("--out", default=None, help="sidecar directory to create (must not exist)")
-    p.add_argument("--k", type=int, default=2, help="pairs per row (default 2)")
+    p.add_argument("--k", type=int, default=2, help="pairs per row (default 2; --unit pairs)")
+    p.add_argument("--unit", choices=("pairs", "roots"), default="pairs",
+                   help="pairs (default; version-2 pair sidecar) or roots (list sidecar: every eligible child of each "
+                        "root with at least two; read with --sibling-unit roots)")
     p.add_argument("--min-visits", type=float, default=2.0, help="minimum visits of both children (default 2)")
     p.add_argument("--seed", type=int, default=0, help="pair-choice seed; the RNG is keyed by (seed, game, ply)")
     p.add_argument("--holdout-frac", type=float, default=0.05,
@@ -52,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             p.error("--out is required unless --self-check is given")
         shards = None if a.shards is None else [int(x) for x in a.shards.split(",") if x.strip()]
         man = materialise(Path(a.collect), Path(a.out), k=a.k, min_visits=a.min_visits, seed=a.seed,
-                          holdout_frac=a.holdout_frac, shards=shards, log=lambda m: print(m, flush=True))
+                          holdout_frac=a.holdout_frac, shards=shards, log=lambda m: print(m, flush=True), unit=a.unit)
     except CollectNotRebuildable as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2

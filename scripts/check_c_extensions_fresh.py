@@ -79,6 +79,7 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
         (
             _SETUP_DEP,
             "chess_anti_engine/mcts/_mcts_tree.c",
+            "chess_anti_engine/mcts/_position_dag.h",
             "chess_anti_engine/mcts/_value_provider.h",
             "chess_anti_engine/mcts/_search_terminal.h",
             "chess_anti_engine/encoding/_cboard_impl.h",

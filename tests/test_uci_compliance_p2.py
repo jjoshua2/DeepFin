@@ -1005,6 +1005,10 @@ def test_child_bestmove_reads_the_most_visited_reply_from_a_real_tree() -> None:
         want = index_to_move(int(kids[int(np.argmax(kid_visits))]), after).uci()
         assert worker.child_bestmove(board, reply) == want
         assert chess.Move.from_uci(want) in after.legal_moves
+        # min_visits: the leader answers only with at least that many visits.
+        top = int(np.max(kid_visits))
+        assert worker.child_bestmove(board, reply, min_visits=top) == want
+        assert worker.child_bestmove(board, reply, min_visits=top + 1) is None
         # searchmoves restrict it; a board that is not the tree's root reads nothing.
         other = next(m.uci() for m in after.legal_moves if m.uci() != want)
         assert worker.child_bestmove(board, reply, searchmoves=(other,)) in (other, None)

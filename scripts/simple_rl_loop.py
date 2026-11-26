@@ -160,7 +160,8 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         book_mix=tuple(float(x) for x in a.book_mix.split(",")), rows_per_shard=a.rows_per_shard,
         opening_sampling=a.opening_sampling, dup_sketch_budget=a.dup_sketch_budget,
         exact_repeat_vs_previous=a.exact_repeat_vs_previous,
-        device=a.device, eval_max_batch=a.eval_max_batch, collect_procs=resolve_collect_procs(a), seed=a.seed,
+        device=a.device, eval_max_batch=a.eval_max_batch, eval_chunk_rows=a.eval_chunk_rows,
+        collect_procs=resolve_collect_procs(a), seed=a.seed,
     )
 
 
@@ -194,7 +195,9 @@ def train_settings(a: argparse.Namespace, run_dir: Path) -> TrainSettings:
         lr_schedule=a.lr_schedule,
         accum_steps=a.accum_steps, snapshot_rows=parse_snapshot_updates(a.snapshot_rows, flag="--snapshot-rows"),
         value_rows_per_game=a.value_rows_per_game,
-        w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_dir=a.sibling_dir,
+        w_sibling=a.w_sibling, sibling_rows=a.sibling_rows, sibling_chunk_pairs=a.sibling_chunk_pairs,
+        sibling_loss=a.sibling_loss, sibling_unit=a.sibling_unit, sibling_order_margin=a.sibling_order_margin,
+        sibling_order_min_dq=a.sibling_order_min_dq, sibling_dir=a.sibling_dir,
     )
     settings.validate()
     if settings.optimizer_hparams_source != "trainer":
@@ -344,12 +347,20 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "lr_schedule": "flat",
                        # Every collect before --collect-procs ran as one process.
                        "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None,
+                       # Every run before --eval-chunk-rows ran without the flag (execution-only: a forward-size bound).
+                       "eval_chunk_rows": None,
                        # Every run before --value-rows-per-game trained the value on every row.
                        "value_rows_per_game": 0,
                        # Every run before --root-full-width searched the plain topk root.
                        "root_full_width": False,
                        # Every run before --w-sibling trained no sibling term.
-                       "w_sibling": 0.0, "sibling_rows": 128, "sibling_dir": None}
+                       "w_sibling": 0.0, "sibling_rows": 128, "sibling_dir": None,
+                       # Every run before --sibling-chunk-pairs forwarded the step's pairs in one graph; the chunked
+                       # term is gradient-equivalent, and the key is read only with --w-sibling.
+                       "sibling_chunk_pairs": 64,
+                       # Every run before --sibling-loss trained the diff form.
+                       "sibling_loss": "diff", "sibling_order_margin": None, "sibling_order_min_dq": None,
+                       "sibling_unit": "pairs"}
 
 
 def _pinned_value(path: Path, key: str, legacy: Any) -> Any:
@@ -524,6 +535,11 @@ def cmd_run(a: argparse.Namespace) -> int:
     if blocked:
         print("not starting: " + "; ".join(blocked), file=sys.stderr)
         return EXIT_BLOCKED
+    # GPU launch gate (docs/operations.md). `run` trains in-process and then starts the gated
+    # arena_standard.py: the pass exports CAE_GPU_GATE_PASSED=<this pid>:simple_rl_loop, which
+    # _child_env() carries to the arena so it does not refuse the GPU memory this driver holds.
+    from chess_anti_engine.utils.gpu_gate import require_gpu_idle
+    require_gpu_idle("simple_rl_loop", allow_reason=a.allow_busy_gpu, device=a.device)
     # Validate BEFORE creating anything: a refused setting leaves no run dir behind.
     validate_before_pinning(a, run_dir, {"collect", "train"} | run_stages_left(a, run_dir))
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -680,6 +696,13 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--eval-max-batch", type=int, default=None,
                    help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
                         "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
+    c.add_argument("--eval-chunk-rows", type=int, default=None, metavar="N",
+                   help="TEMPORARY, for the N comparison: most rows one network forward of the CUDA evaluator "
+                        "runs (1..2048); a larger leaf batch is forwarded in row-ordered chunks (same search, results "
+                        "equal up to bf16 batching effects). Default: the evaluator's CUDA-graph row cap (512), so "
+                        "every forward replays a graph; chunks above 512 rows run EAGER, counted in "
+                        "cuda_graph_stats eager_over_max_rows, which is 0 only at <= 512. Bounds peak GPU memory; "
+                        "recorded as eval_chunk_rows_realised")
     c.add_argument("--collect-procs", type=int, default=None, metavar="K",
                    help="collect processes sharing the device, each playing a disjoint slice of the openings "
                         "with its own seed (pinned: it sets the RNG streams). Default: the run's pinned value, "
@@ -782,6 +805,25 @@ def _common(p: argparse.ArgumentParser) -> None:
     t.add_argument("--sibling-rows", type=int, default=128,
                    help="with --w-sibling: how many of each batch's rows (the first that carry pairs, in the "
                         "batch's shuffled order) present their pairs. Default 128")
+    t.add_argument("--sibling-chunk-pairs", type=int, default=64,
+                   help="with --w-sibling: at most this many pairs per forward; each chunk backpropagates inside "
+                        "the penalty hook, so peak memory is the root batch + one chunk. Gradient-equivalent at "
+                        "any value (float summation order); there is no unchunked path. Default 64")
+    t.add_argument("--sibling-loss", choices=("diff", "order"), default="diff",
+                   help="with --w-sibling: the term's form. diff (default, the registered form): Huber_0.2 of "
+                        "dv - dq, the size of the difference as well as its sign. order: (min visits / 64) * "
+                        "relu(min(--sibling-order-margin, |dq|) - sign(dq) * dv) on pairs with |dq| >= "
+                        "--sibling-order-min-dq: zero once the net orders the pair as the search does, by the margin "
+                        "capped at the search's own gap")
+    t.add_argument("--sibling-unit", choices=("pairs", "roots"), default="pairs",
+                   help="with --sibling-loss order: pairs (default; the K sampled pairs per row) or roots (a root-list "
+                        "sidecar made with simple_rl_sibling_pairs.py --unit roots: every pair among each root's "
+                        "children with >= min visits; --sibling-rows is then roots per batch)")
+    t.add_argument("--sibling-order-margin", type=float, default=None,
+                   help="with --sibling-loss order (required there): the ranking margin's ceiling, >= 0; "
+                        "each pair's margin is min(this, |dq|)")
+    t.add_argument("--sibling-order-min-dq", type=float, default=None,
+                   help="with --sibling-loss order (required there): pairs with |dq| below it contribute nothing; > 0")
     t.add_argument("--sibling-dir", default=None,
                    help="with --w-sibling: directory holding gen_<g>/ sidecars written by "
                         "scripts/simple_rl_sibling_pairs.py for every generation the phase trains on")
@@ -864,6 +906,8 @@ def parser() -> argparse.ArgumentParser:
     _common(r)
     r.add_argument("--generations", type=int, required=True)
     r.add_argument("--allow-config-change", action="store_true")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument
+    add_allow_busy_gpu_argument(r)
     return p
 
 

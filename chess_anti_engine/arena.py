@@ -156,8 +156,12 @@ def main() -> None:
     sides.add_argument("--swap-sides", dest="swap_sides", action="store_true")
     sides.add_argument("--no-swap-sides", dest="swap_sides", action="store_false")
     ap.set_defaults(swap_sides=True)
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(ap)
 
     args = ap.parse_args()
+    # GPU launch gate (docs/operations.md), before torch.cuda.is_available() initialises CUDA.
+    require_gpu_idle("chess_anti_engine.arena", allow_reason=args.allow_busy_gpu, device=args.device)
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     rng = np.random.default_rng(int(args.seed))

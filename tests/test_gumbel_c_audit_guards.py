@@ -87,13 +87,16 @@ def _cfg(**kw: float) -> GumbelConfig:
 
 
 def _run(boards, *, cfg=None, evaluator=None, seed=5, **kw):
-    gumbel_c_mod._COMPILED_BATCH_BUCKETS = ()
-    return run_gumbel_root_many_c(
-        None, boards, device="cpu", rng=np.random.default_rng(seed),
-        cfg=cfg if cfg is not None else _cfg(),
-        evaluator=evaluator if evaluator is not None else _HashEvaluator(),
-        target_batch=0, vloss_weight=1, **kw,
-    )
+    # Scoped: a bare module assignment leaked the empty ladder into every
+    # later test in the session (no drain padded after this file ran).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+        return run_gumbel_root_many_c(
+            None, boards, device="cpu", rng=np.random.default_rng(seed),
+            cfg=cfg if cfg is not None else _cfg(),
+            evaluator=evaluator if evaluator is not None else _HashEvaluator(),
+            target_batch=0, vloss_weight=1, **kw,
+        )
 
 
 # --- F4: the VIRTUAL_MEAN trap -------------------------------------------

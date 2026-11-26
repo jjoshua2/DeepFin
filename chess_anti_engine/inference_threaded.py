@@ -21,6 +21,7 @@ from chess_anti_engine.inference import (
     DirectGPUEvaluator,
     _COMPILED_BATCH_BUCKETS,
     _bf16_bits_to_float32_np,
+    forward_live_rows_kwargs,
     model_config_identity_key,
 )
 from chess_anti_engine.model import ModelConfig
@@ -39,6 +40,7 @@ class _EvalRequest:
     future: concurrent.futures.Future
     legal_flat: np.ndarray | None = None
     legal_counts: np.ndarray | None = None
+    live: int | None = None  # caller's live rows when it padded upstream (trace only)
 
 
 @dataclass(slots=True)
@@ -210,7 +212,7 @@ class ThreadedDispatcher:
         )
         self._thread.start()
 
-    def evaluate(self, x: np.ndarray) -> concurrent.futures.Future:
+    def evaluate(self, x: np.ndarray, *, live_rows: int | None = None) -> concurrent.futures.Future:
         if x.shape[0] > self._max_batch:
             raise ValueError(
                 f"single submission of {x.shape[0]} > max_batch={self._max_batch}; "
@@ -219,7 +221,7 @@ class ThreadedDispatcher:
         future: concurrent.futures.Future = concurrent.futures.Future()
         with self._cond:
             self._raise_if_poisoned()
-            self._queue.append(_EvalRequest(x, future))
+            self._queue.append(_EvalRequest(x, future, live=live_rows))
             self._cond.notify()
         return future
 
@@ -243,8 +245,15 @@ class ThreadedDispatcher:
                         "ThreadedDispatcher thread died while awaiting result"
                     ) from self._fatal_exc
 
+    @property
+    def accepts_live_rows(self) -> bool:
+        """`evaluate_encoded` takes ``live_rows=``; the coalesced batch reports
+        the sum of its requests' live rows to the evaluator."""
+        return True
+
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         if relations is not None:
             raise NotImplementedError(
@@ -252,7 +261,7 @@ class ThreadedDispatcher:
                 "use worker-local direct inference (see "
                 "check_dynamic_relations_transport)"
             )
-        return self._wait_result(self.evaluate(x))
+        return self._wait_result(self.evaluate(x, live_rows=live_rows))
 
     @property
     def supports_legal_bf16(self) -> bool:
@@ -651,6 +660,11 @@ class ThreadedDispatcher:
   # matches the pre-refactor behavior (pad with zeros) functionally;
   # leaving it untouched saves a memset.
         self._lifetime_pack_s += time.perf_counter() - t_pack0
+        # ``bucket`` rows forward; ``real_n`` of them were submitted, and of
+        # those the callers' own upstream padding is not live.
+        live = forward_live_rows_kwargs(ev, sum(
+            item.encoded.shape[0] if item.live is None else item.live for item in items
+        ))
         t0 = time.perf_counter()
         if compact:
             if len(items) == 1:
@@ -670,10 +684,10 @@ class ThreadedDispatcher:
             if bucket > real_n:
                 legal_counts = np.pad(legal_counts, (0, bucket - real_n))
             pol_t, wdl_t, evt = ev.evaluate_inplace_legal_bf16_async(
-                bucket, legal_flat, legal_counts, slot=slot,
+                bucket, legal_flat, legal_counts, slot=slot, **live,
             )
         else:
-            pol_t, wdl_t, evt = ev.evaluate_inplace_async(bucket, slot=slot)
+            pol_t, wdl_t, evt = ev.evaluate_inplace_async(bucket, slot=slot, **live)
         self._lifetime_submit_s += time.perf_counter() - t0
         self._lifetime_batches += 1
         self._lifetime_positions += real_n

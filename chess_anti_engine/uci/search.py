@@ -2923,10 +2923,12 @@ class SearchWorker:
 
     def child_bestmove(
         self, board: chess.Board, move: chess.Move, *, searchmoves: tuple[str, ...] = (),
+        min_visits: int = 1,
     ) -> str | None:
         """The most-visited move at the node ``board`` + ``move`` of the CURRENT
         tree (``board`` must be its root), or ``None``: no tree for ``board``, no
-        such child, or no visited child inside ``searchmoves``.
+        such child, or no child inside ``searchmoves`` with at least
+        ``min_visits`` visits.
 
         Reads visit counts only -- no evaluation, no search. ``Engine`` uses it
         on a ponder miss: the ponder tree's root is the position BEFORE the
@@ -2952,7 +2954,7 @@ class SearchWorker:
                 continue
             if int(n) > best_visits:
                 best, best_visits = int(action), int(n)
-        if best is None:
+        if best is None or best_visits < max(1, int(min_visits)):
             return None
         return index_to_move(best, after).uci()
 

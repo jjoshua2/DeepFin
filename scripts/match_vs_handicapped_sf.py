@@ -1338,7 +1338,12 @@ def main() -> None:
     if not config_path.exists():
         raise SystemExit(f"--config not found: {config_path}")
     defaults = _config_defaults(config_path)
-    args = build_parser(defaults, config_path=config_path).parse_args()
+    parser = build_parser(defaults, config_path=config_path)
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(parser)
+    args = parser.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("match_vs_handicapped_sf", allow_reason=args.allow_busy_gpu, device=args.device)
     _validate(args)
 
     from scripts.arena_standard import (

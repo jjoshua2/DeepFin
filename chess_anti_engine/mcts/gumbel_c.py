@@ -45,6 +45,7 @@ from chess_anti_engine.inference import (  # skylos: ignore (AsyncBatchEvaluator
     BatchEvaluator,
     LocalModelEvaluator,
     _COMPILED_BATCH_BUCKETS,
+    forward_live_rows_kwargs,
 )
 import chess_anti_engine.mcts._mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import (
@@ -1880,11 +1881,12 @@ def run_gumbel_root_many_c(
                 nl = int(_n_leaves[g])
                 padded = _pad_for_bucket(nl, len(_enc_bufs[g]))
                 _record_batch_dup(_enc_bufs[g], nl, padded)
+                _live = forward_live_rows_kwargs(eval_impl, nl)
                 _tg0 = _time.perf_counter()
                 if _inplace:
-                    _pending_receipt = eval_impl.evaluate_inplace_async(padded, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
+                    _pending_receipt = eval_impl.evaluate_inplace_async(padded, slot=g, **_live)  # pyright: ignore[reportAttributeAccessIssue]
                 else:
-                    _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded])
+                    _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded], **_live)
                 pol_t, wdl_t, ev = _pending_receipt
                 if ev is not None:
                     ev.synchronize()
@@ -1942,11 +1944,12 @@ def run_gumbel_root_many_c(
                 nl0 = int(_n_leaves[0])
                 padded0 = _pad_for_bucket(nl0, len(_enc_bufs[0]))
                 _record_batch_dup(_enc_bufs[0], nl0, padded0)
+                _live0 = forward_live_rows_kwargs(eval_impl, nl0)
                 _tg0 = _time.perf_counter()
                 if _inplace:
-                    _pending_receipt = eval_impl.evaluate_inplace_async(padded0, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+                    _pending_receipt = eval_impl.evaluate_inplace_async(padded0, slot=0, **_live0)  # pyright: ignore[reportAttributeAccessIssue]
                 else:
-                    _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
+                    _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0], **_live0)
                 pol_t0, wdl_t0, ev0 = _pending_receipt
 
       # 2) While GPU processes group 0, do C tree walks for group 1
@@ -2000,11 +2003,12 @@ def run_gumbel_root_many_c(
                     nl1 = int(_n_leaves[1])
                     padded1 = _pad_for_bucket(nl1, len(_enc_bufs[1]))
                     _record_batch_dup(_enc_bufs[1], nl1, padded1)
+                    _live1 = forward_live_rows_kwargs(eval_impl, nl1)
                     _tg1 = _time.perf_counter()
                     if _inplace:
-                        _pending_receipt = eval_impl.evaluate_inplace_async(padded1, slot=1)  # pyright: ignore[reportAttributeAccessIssue]
+                        _pending_receipt = eval_impl.evaluate_inplace_async(padded1, slot=1, **_live1)  # pyright: ignore[reportAttributeAccessIssue]
                     else:
-                        _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
+                        _pending_receipt = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1], **_live1)
                     pol_t1, wdl_t1, ev1 = _pending_receipt
 
       # 5) While GPU processes group 1, do C tree walks for group 0
@@ -2190,6 +2194,9 @@ def run_gumbel_root_many_c(
                     _enc_buf, n_leaves,
                     n_leaves if (_use_legal_bf16 or _submit_live_rows_only) else padded,
                 )
+                # Every arm below that forwards `padded` rows reports the live
+                # count (forward-size diagnostics only; empty when they are off).
+                _live = forward_live_rows_kwargs(eval_impl, n_leaves)
                 _tg0 = _time.perf_counter()
                 if _use_legal_bf16:
                     legal_flat, legal_counts = tree.get_pending_legal_indices()
@@ -2199,19 +2206,21 @@ def run_gumbel_root_many_c(
                 elif _inplace:
                     if _rel_buf is not None:
                         pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(  # pyright: ignore[reportAttributeAccessIssue]
-                            padded, slot=0, relations=_rel_buf[:padded],
+                            padded, slot=0, relations=_rel_buf[:padded], **_live,
                         )
                     else:
-                        pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+                        pol_t, wdl_t, event = eval_impl.evaluate_inplace_async(padded, slot=0, **_live)  # pyright: ignore[reportAttributeAccessIssue]
                     if event is not None:
                         event.synchronize()
                     pol_all = pol_t[:n_leaves].numpy()
                     wdl_all = wdl_t[:n_leaves].numpy()
                 elif _has_async:
                     pol_t, wdl_t, event = (
-                        _async_eval.evaluate_encoded_async(_enc_buf[:padded], relations=_rel_buf[:padded])
+                        _async_eval.evaluate_encoded_async(
+                            _enc_buf[:padded], relations=_rel_buf[:padded], **_live,
+                        )
                         if _rel_buf is not None
-                        else _async_eval.evaluate_encoded_async(_enc_buf[:padded])
+                        else _async_eval.evaluate_encoded_async(_enc_buf[:padded], **_live)
                     )
                     if event is not None:
                         event.synchronize()
@@ -2219,10 +2228,14 @@ def run_gumbel_root_many_c(
                     wdl_all = wdl_t[:n_leaves].numpy()
                 else:
                     _rows = n_leaves if _submit_live_rows_only else padded
+                    # The live selfplay path (slot clients at policy_temp != 1):
+                    # `padded` rows go to the broker, `n_leaves` of them live.
                     pol_all, wdl_all = (
-                        eval_impl.evaluate_encoded(_enc_buf[:_rows], relations=_rel_buf[:_rows])
+                        eval_impl.evaluate_encoded(
+                            _enc_buf[:_rows], relations=_rel_buf[:_rows], **_live,
+                        )
                         if _rel_buf is not None
-                        else eval_impl.evaluate_encoded(_enc_buf[:_rows])
+                        else eval_impl.evaluate_encoded(_enc_buf[:_rows], **_live)
                     )
                     pol_all = pol_all[:n_leaves]
                     wdl_all = wdl_all[:n_leaves]

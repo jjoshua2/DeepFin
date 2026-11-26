@@ -23,7 +23,9 @@ from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
 from chess_anti_engine.model.tiny import TinyNet
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# Resolved in main() AFTER the GPU gate: torch.cuda.is_available() initialises CUDA (cuInit) and
+# opens /dev/dxg on WSL2, so it must not run at import time.
+DEVICE = "cpu"
 N_BOARDS = 256
 SIMULATIONS = 64
 
@@ -73,6 +75,12 @@ def bench(label: str, model, evaluator, boards, cboards, rng, simulations):
 
 
 def main():
+    # GPU launch gate (docs/operations.md). No argparse here: the override is the env twin
+    # CAE_ALLOW_BUSY_GPU="<reason>".
+    from chess_anti_engine.utils.gpu_gate import require_gpu_idle
+    global DEVICE
+    require_gpu_idle("bench_pipeline", device=None)
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     rng = np.random.default_rng(42)
     print(f"Device: {DEVICE}, boards: {N_BOARDS}, sims: {SIMULATIONS}")
 

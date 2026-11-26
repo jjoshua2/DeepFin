@@ -296,11 +296,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-samples", type=int, default=GPU_SAMPLES)
     parser.add_argument("--gpu-sample-interval", type=float, default=GPU_SAMPLE_INTERVAL)
     parser.add_argument("--no-ray-stop", action="store_true", help="do not run ray stop --force during cleanup")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument
+    add_allow_busy_gpu_argument(parser)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    # GPU launch gate (docs/operations.md): this profiler boots a full training driver (and may
+    # `ray stop --force` on cleanup), so it must never start beside a running GPU job by accident.
+    from chess_anti_engine.utils.gpu_gate import require_gpu_idle
+    require_gpu_idle("profile_distributed", allow_reason=args.allow_busy_gpu)
     work_dir = args.work_dir
     server_dir = args.server_dir or work_dir / "server"
     replay_dir = args.replay_dir or work_dir / "replay"

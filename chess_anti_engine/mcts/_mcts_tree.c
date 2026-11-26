@@ -59,6 +59,9 @@
  * file so the check resolver decides "terminal, and worth what" with the SAME
  * code the tree does, rather than a second copy that can drift. */
 #include "_search_terminal.h"
+/* Diagnostic census uses the SAME structural equality as the canonical graph.
+ * No graph or search state is added to MCTSTree. */
+#include "_position_dag.h"
 
 /* PyCBoard layout — must match _lc0_ext.c's typedef exactly. */
 typedef struct { PyObject_HEAD CBoard board; } PyCBoard;
@@ -3989,6 +3992,216 @@ static PyObject *MCTSTree_tt_entry_stats(MCTSTreeObject *self, PyObject *Py_UNUS
     return Py_BuildValue("(Li)", live, (int)mx);
 }
 
+/* Post-search occupancy census. Nothing is recorded by the search hot path.
+ *
+ * The cache contains bound roots, evaluated leaves AND TT-reused recipients.
+ * Counting it is NOT counting NN requests, visits or saved work. All cached
+ * boards are inspected, including nodes outside a subsequently advanced root.
+ * The caller must have stopped every worker using this tree. Keeping the GIL
+ * prevents Python calls from overlapping, not GIL-released native walkers.
+ * Enforcement is asymmetric: only a pending GUMBEL batch is refused (gsim.phase
+ * == 1 below). PUCT has no such flag -- select_leaves/integrate, the pucv pool
+ * and walker_descend_puct[_tb]/walker_integrate_leaf release the GIL inside one
+ * call and leave no tree-level in-flight marker -- so a census taken while a
+ * PUCT walker runs on another thread is NOT detected and may read a torn cache.
+ * Refusing it would need an atomic in-flight counter on every GIL-released
+ * entry (hot-path cost for a diagnostic); the PUCT case is a documented limit.
+ *
+ * Hashes only select candidates. Structural, context and encoded-row equality
+ * are each verified exactly before a group is reused. Two row buffers keep
+ * memory O(cached boards), rather than storing a full encoded row per board.
+ */
+static uint64_t census_hash_bytes(uint64_t h, const void *data, size_t size) {
+    const unsigned char *bytes = (const unsigned char *)data;
+    for (size_t i = 0; i < size; i++) {
+        h ^= (uint64_t)bytes[i];
+        h *= UINT64_C(1099511628211);
+    }
+    return h;
+}
+
+static uint64_t census_context_hash(const CBoard *b) {
+    uint64_t h = UINT64_C(14695981039346656037);
+    /* Exactly the fields compared by cboard_context_match(..., 0). Never hash
+     * padding, inactive stack slots, bookkeeping ply or ring-buffer layout. */
+#define CENSUS_HASH_FIELD(field) \
+    h = census_hash_bytes(h, &b->field, sizeof(b->field))
+    CENSUS_HASH_FIELD(bb);
+    CENSUS_HASH_FIELD(occ);
+    CENSUS_HASH_FIELD(turn);
+    CENSUS_HASH_FIELD(castling);
+    CENSUS_HASH_FIELD(ep_square);
+    CENSUS_HASH_FIELD(halfmove_clock);
+    CENSUS_HASH_FIELD(hash);
+    CENSUS_HASH_FIELD(hist_len);
+    CENSUS_HASH_FIELD(hash_stack_len);
+    h = census_hash_bytes(h, b->hash_stack,
+                         (size_t)b->hash_stack_len * sizeof(uint64_t));
+    for (int hi = 0; hi < b->hist_len; hi++) {
+        int i = (b->hist_head - 1 - hi + CBOARD_HISTORY_MAX) % CBOARD_HISTORY_MAX;
+        CENSUS_HASH_FIELD(hist_bb[i]);
+        CENSUS_HASH_FIELD(hist_occ[i]);
+        CENSUS_HASH_FIELD(hist_turn[i]);
+        CENSUS_HASH_FIELD(hist_castling[i]);
+        CENSUS_HASH_FIELD(hist_hash[i]);
+        CENSUS_HASH_FIELD(hist_was_rep[i]);
+    }
+#undef CENSUS_HASH_FIELD
+    return h;
+}
+
+static PyObject *MCTSTree_transposition_census(
+    MCTSTreeObject *self, PyObject *args, PyObject *kwargs)
+{
+    int input_history_mode, n_extra, max_cached_boards = 8192;
+    static char *kwlist[] = {
+        "input_history_mode", "n_extra", "max_cached_boards", NULL
+    };
+    if (!PyArg_ParseTupleAndKeywords(
+            args, kwargs, "ii|i:transposition_census", kwlist,
+            &input_history_mode, &n_extra, &max_cached_boards))
+        return NULL;
+    if (input_history_mode < 0 || input_history_mode > 2) {
+        PyErr_SetString(PyExc_ValueError, "input_history_mode must be 0, 1 or 2");
+        return NULL;
+    }
+    if (!IS_SUPPORTED_EXTRA_FEATURES(n_extra)) {
+        PyErr_SetString(PyExc_ValueError, "n_extra must be a registered feature width");
+        return NULL;
+    }
+    if (max_cached_boards <= 0) {
+        PyErr_SetString(PyExc_ValueError, "max_cached_boards must be positive");
+        return NULL;
+    }
+    if (self->gsim.phase == 1) {
+        PyErr_SetString(PyExc_RuntimeError,
+                        "transposition_census requires a completed search; batch pending");
+        return NULL;
+    }
+
+    const TreeData *t = &self->tree;
+    const int32_t n = t->cb_pool_count;
+    if (n > max_cached_boards) {
+        PyErr_Format(PyExc_ValueError,
+                     "transposition_census requires all %d cached boards; limit is %d "
+                     "(no partial census was taken)", (int)n, max_cached_boards);
+        return NULL;
+    }
+    /* The next-power-of-two tables use fewer than four slots per board.
+     * Guard the byte arithmetic before doubling, including on 32-bit hosts. */
+    if ((size_t)n > SIZE_MAX / (4 * sizeof(int32_t)))
+        return PyErr_NoMemory();
+    size_t ht_cap = 1;
+    while (ht_cap < (size_t)n * 2) ht_cap <<= 1;
+    const size_t mask = ht_cap - 1;
+    const size_t count = n > 0 ? (size_t)n : 1;
+    const size_t row_bytes = (size_t)(112 + n_extra) * 64 * sizeof(float);
+    CaeDagPosition *positions = PyMem_Calloc(count, sizeof(*positions));
+    uint64_t *context_hashes = PyMem_Calloc(count, sizeof(*context_hashes));
+    uint64_t *row_hashes = PyMem_Calloc(count, sizeof(*row_hashes));
+    int32_t *structural_table = PyMem_Malloc(ht_cap * sizeof(*structural_table));
+    int32_t *context_table = PyMem_Malloc(ht_cap * sizeof(*context_table));
+    int32_t *row_table = PyMem_Malloc(ht_cap * sizeof(*row_table));
+    int32_t *contexts_per_position = PyMem_Calloc(count, sizeof(*contexts_per_position));
+    float *row = PyMem_Malloc(row_bytes);
+    float *representative_row = PyMem_Malloc(row_bytes);
+    PyObject *result = NULL;
+    if (!positions || !context_hashes || !row_hashes || !structural_table ||
+        !context_table || !row_table || !contexts_per_position ||
+        !row || !representative_row) {
+        PyErr_NoMemory();
+        goto cleanup;
+    }
+    for (size_t i = 0; i < ht_cap; i++)
+        structural_table[i] = context_table[i] = row_table[i] = -1;
+
+    int32_t unique_structures = 0, unique_contexts = 0, unique_rows = 0;
+    for (int32_t i = 0; i < n; i++) {
+        const CBoard *b = &t->cb_pool[i];
+        if (!cboard_context_match(b, b, 0)) {
+            PyErr_SetString(PyExc_RuntimeError, "invalid cached board context in census");
+            goto cleanup;
+        }
+        cae_dag_position_from_cboard(b, &positions[i]);
+        size_t slot = (size_t)positions[i].key & mask;
+        while (structural_table[slot] >= 0 &&
+               !cae_dag_position_equal(&positions[structural_table[slot]], &positions[i]))
+            slot = (slot + 1) & mask;
+        if (structural_table[slot] < 0) {
+            structural_table[slot] = i;
+            unique_structures++;
+        }
+        const int32_t structural_representative = structural_table[slot];
+
+        context_hashes[i] = census_context_hash(b);
+        slot = (size_t)context_hashes[i] & mask;
+        while (context_table[slot] >= 0) {
+            int32_t j = context_table[slot];
+            if (context_hashes[j] == context_hashes[i] &&
+                cboard_context_match(&t->cb_pool[j], b, 0))
+                break;
+            slot = (slot + 1) & mask;
+        }
+        if (context_table[slot] < 0) {
+            context_table[slot] = i;
+            unique_contexts++;
+            contexts_per_position[structural_representative]++;
+        }
+
+        cboard_encode_history_planes_into(b, row, n_extra, input_history_mode);
+        row_hashes[i] = census_hash_bytes(UINT64_C(14695981039346656037), row, row_bytes);
+        slot = (size_t)row_hashes[i] & mask;
+        while (row_table[slot] >= 0) {
+            int32_t j = row_table[slot];
+            if (row_hashes[j] == row_hashes[i]) {
+                cboard_encode_history_planes_into(
+                    &t->cb_pool[j], representative_row, n_extra, input_history_mode);
+                if (memcmp(row, representative_row, row_bytes) == 0) break;
+            }
+            slot = (slot + 1) & mask;
+        }
+        if (row_table[slot] < 0) {
+            row_table[slot] = i;
+            unique_rows++;
+        }
+    }
+
+    int32_t multiple_context_positions = 0, max_contexts = 0;
+    for (int32_t i = 0; i < n; i++) {
+        if (contexts_per_position[i] > 1) multiple_context_positions++;
+        if (contexts_per_position[i] > max_contexts) max_contexts = contexts_per_position[i];
+    }
+    result = Py_BuildValue(
+        "{s:s,s:O,s:s,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i,s:i}",
+        "scope", "all_cached_boards",
+        "complete", Py_True,
+        "encoded_dtype", "reconstructed_float32_planes",
+        "input_history_mode", input_history_mode,
+        "n_extra", n_extra,
+        "max_cached_boards", max_cached_boards,
+        "cached_boards", (int)n,
+        "unique_structural_positions", (int)unique_structures,
+        "structural_duplicate_nodes", (int)(n - unique_structures),
+        "unique_search_contexts", (int)unique_contexts,
+        "same_context_duplicate_nodes", (int)(n - unique_contexts),
+        "unique_encoded_inputs", (int)unique_rows,
+        "same_input_duplicate_nodes", (int)(n - unique_rows),
+        "positions_with_multiple_contexts", (int)multiple_context_positions,
+        "max_contexts_per_position", (int)max_contexts);
+
+cleanup:
+    PyMem_Free(positions);
+    PyMem_Free(context_hashes);
+    PyMem_Free(row_hashes);
+    PyMem_Free(structural_table);
+    PyMem_Free(context_table);
+    PyMem_Free(row_table);
+    PyMem_Free(contexts_per_position);
+    PyMem_Free(row);
+    PyMem_Free(representative_row);
+    return result;
+}
+
 /* set_growth_step(max_nodes) -> None. Cap on node slots one arena growth may
  * add (0 = plain doubling, the default every non-UCI caller keeps). */
 static PyObject *MCTSTree_set_growth_step(MCTSTreeObject *self, PyObject *args) {
@@ -5842,6 +6055,18 @@ static PyMethodDef MCTSTree_methods[] = {
      "memory_stats() -> dict. Capacities, live counts and element sizes of the tree buffers."},
     {"tt_entry_stats", (PyCFunction)MCTSTree_tt_entry_stats, METH_NOARGS,
      "tt_entry_stats() -> (live_entries, max_node_id). Transposition-table scan (diagnostic)."},
+    {"transposition_census", (PyCFunction)(void (*)(void))MCTSTree_transposition_census,
+     METH_VARARGS | METH_KEYWORDS,
+     "transposition_census(input_history_mode, n_extra, max_cached_boards=8192) -> dict.\n\n"
+     "Read-only full census of cached board occupancy after a completed search.\n"
+     "Expensive and opt-in: call outside timed search, never from an eval loop.\n"
+     "Counts structures, exact TT contexts and reconstructed float32 plane rows;\n"
+     "not visits, NN requests or saved evaluations. Includes roots and TT recipients.\n"
+     "Refuses an exceeded bound or pending Gumbel batch. Caller must stop all native\n"
+     "walkers; holding the GIL alone does not exclude GIL-released workers.\n"
+     "PUCT walkers (select/integrate, pucv pool, walker_*) are NOT detected: no\n"
+     "in-flight flag exists, so a concurrent PUCT descent is a documented limit.\n"
+     "Reconstructed planes are not a log of actual BF16/relations input transport."},
     {"footprint_bytes", (PyCFunction)MCTSTree_footprint_bytes, METH_NOARGS,
      "footprint_bytes() -> int. Bytes the tree really holds resident (the UCI Hash measure)."},
     {"set_growth_step", (PyCFunction)MCTSTree_set_growth_step, METH_VARARGS,
