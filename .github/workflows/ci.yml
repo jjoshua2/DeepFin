@@ -22,26 +22,18 @@ jobs:
       - name: Backlog handoff and report-consumer regressions
         run: python -B -S -m unittest discover -s tools/backlog_handoff -p 'test_*.py' -v
 
-  test:
+  # ⚑ RECORD-ONLY FAST PATH. A pull request whose every changed path (old and
+  # new name of a rename included) is docs/experiments/*.md cannot change what
+  # the CPU suites execute. For those PRs `test` runs only the `records` suite
+  # (scripts/validate.py RECORD_TESTS) and the shards are skipped. Anything else
+  # — a push to main, an API error, an empty file list, one path outside that
+  # directory — leaves `records_only` unset and the full suites run.
+  classify:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 5
+    outputs:
+      records_only: ${{ steps.scope.outputs.records_only }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: ".python-version"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          activate-environment: true
-      # Same locked dependencies and native build constraints as local setup.
-      # ⚑ RECORD-ONLY FAST PATH. A pull request whose every changed path
-      # (old and new name of a rename included) is docs/experiments/*.md cannot
-      # change what the two suites below execute, yet each push used to wait
-      # ~58 min for them. For those PRs this job runs only the `records` suite
-      # (scripts/validate.py RECORD_TESTS). Anything else — a push to main, an API error, an empty file
-      # list, one path outside that directory — leaves `records_only` unset and
-      # the full suites run. The job is never skipped: `test` is a required
-      # check and must report a real result.
       - name: Classify the change
         id: scope
         if: github.event_name == 'pull_request'
@@ -58,37 +50,95 @@ jobs:
           cat changed.txt
           if [ "$n" -gt 0 ] && [ "$other" -eq 0 ]; then echo "records_only=true" >> "$GITHUB_OUTPUT"; fi
           rm -f changed.txt
+
+  # The CPU suite, split by test file into parallel jobs: one runner took ~58
+  # min, bound by the one-process serial phase. scripts/validate.py assigns
+  # every test file under tests/ to exactly one shard (balanced by
+  # tests/ci_file_durations.json; a file missing from it is still assigned).
+  # The shard count is written twice below, in the matrix and in --shard;
+  # tests/test_validation_runner.py fails when they differ. Runs unless the
+  # change is record-only, also when `classify` itself failed.
+  test-shard:
+    needs: classify
+    if: ${{ !cancelled() && needs.classify.outputs.records_only != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+      # Same locked dependencies and native build constraints as local setup.
       - name: Install package + dev deps
         run: |
           uv sync --locked --extra dev --extra cpu
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # Keep a capped regression even though ordinary CI can use all cores.
       # Worker tests run in-process and must restore their one-thread setting.
-      - name: Record-reading tests (record-only pull request)
-        if: steps.scope.outputs.records_only == 'true'
-        env:
-          CAE_TEST_THREADS: auto
-          CAE_EXPECT_SLIDER_BACKEND: magic
-        run: python scripts/validate.py records --require-cpu-wheel
+      # Once per run, not once per shard.
       - name: Capped local regression
-        if: steps.scope.outputs.records_only != 'true'
+        if: matrix.shard == 1
         env:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: magic
         run: python scripts/validate.py capped --require-cpu-wheel
-      - name: Ordinary CPU suite
-        if: steps.scope.outputs.records_only != 'true'
+      - name: Ordinary CPU suite (one shard)
         env:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: magic
-        run: python scripts/validate.py cpu --require-cpu-wheel
+        run: python scripts/validate.py cpu --require-cpu-wheel --shard ${{ matrix.shard }}/10
       - name: Upload test timings and results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cpu-test-results
+          name: cpu-test-results-shard-${{ matrix.shard }}
           path: artifacts/validation/*.xml
           if-no-files-found: warn
+
+  # The required check. It always runs and reports a real result: the record
+  # suite for a record-only pull request, otherwise the verdict of the shards.
+  # A skipped, failed or cancelled shard matrix is a failure here.
+  test:
+    needs: [classify, test-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Require every CPU shard to have passed
+        if: needs.classify.outputs.records_only != 'true'
+        env:
+          SHARDS_RESULT: ${{ needs.test-shard.result }}
+        run: |
+          echo "test-shard result: $SHARDS_RESULT"
+          [ "$SHARDS_RESULT" = "success" ]
+      - uses: actions/checkout@v4
+        if: needs.classify.outputs.records_only == 'true'
+      - uses: actions/setup-python@v5
+        if: needs.classify.outputs.records_only == 'true'
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        if: needs.classify.outputs.records_only == 'true'
+        with:
+          activate-environment: true
+      - name: Install package + dev deps
+        if: needs.classify.outputs.records_only == 'true'
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
+      - name: Record-reading tests (record-only pull request)
+        if: needs.classify.outputs.records_only == 'true'
+        env:
+          CAE_TEST_THREADS: auto
+          CAE_EXPECT_SLIDER_BACKEND: magic
+        run: python scripts/validate.py records --require-cpu-wheel
 
   # ⚑ WHY THIS LEG EXISTS. The two slider backends are chosen by the
   # PREPROCESSOR, so each build contains exactly one of them and the other is

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import platform
 import subprocess
 import sys
 from typing import Any
@@ -14,6 +15,16 @@ import pytest
 import torch
 
 from scripts import validate
+
+
+@pytest.fixture(autouse=True)
+def _platform_string_is_cached() -> None:
+    """platform.platform() shells out once per process (``uname -p``) and caches.
+
+    Tests here replace ``subprocess.run``; without the cache each would depend
+    on an earlier test having run ``validate.main`` unpatched.
+    """
+    platform.platform()
 
 
 @pytest.fixture(autouse=True)
@@ -250,18 +261,154 @@ def test_record_only_fast_path_keeps_the_full_suites_as_the_default() -> None:
     import yaml
 
     ci: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/ci.yml").read_text())
-    steps = {step.get("name"): step for step in ci["jobs"]["test"]["steps"]}
-    flag = "steps.scope.outputs.records_only"
-    # Full suites run unless the flag is exactly 'true' (unset on any classifier failure).
-    assert steps["Capped local regression"]["if"] == f"{flag} != 'true'"
-    assert steps["Ordinary CPU suite"]["if"] == f"{flag} != 'true'"
+    jobs = ci["jobs"]
+    flag = "needs.classify.outputs.records_only"
+    assert jobs["classify"]["outputs"] == {"records_only": "${{ steps.scope.outputs.records_only }}"}
+    # The shards run unless the flag is exactly 'true' (unset on any classifier failure),
+    # and also when the classify job itself failed.
+    shards = jobs["test-shard"]
+    assert shards["needs"] == "classify"
+    assert shards["if"] == f"${{{{ !cancelled() && {flag} != 'true' }}}}"
+    steps = {step.get("name"): step for step in jobs["test"]["steps"]}
     records = steps["Record-reading tests (record-only pull request)"]
     assert records["if"] == f"{flag} == 'true'"
     assert "scripts/validate.py records --require-cpu-wheel" in records["run"]
-    classify = steps["Classify the change"]["run"]
+    (scope,) = jobs["classify"]["steps"]
+    assert scope["id"] == "scope"
+    classify = scope["run"]
     assert "'^docs/experiments/[^/]+\\.md$'" in classify
     assert '[ "$n" -gt 0 ] && [ "$other" -eq 0 ]' in classify
     assert "previous_filename" in classify
+
+
+def test_ci_shards_the_cpu_suite_and_the_required_check_needs_every_shard() -> None:
+    import yaml
+
+    ci: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/ci.yml").read_text())
+    shards = ci["jobs"]["test-shard"]
+    assert shards["strategy"]["fail-fast"] is False
+    matrix = shards["strategy"]["matrix"]["shard"]
+    count = len(matrix)
+    assert matrix == list(range(1, count + 1))
+    steps = {step.get("name"): step for step in shards["steps"]}
+    cpu = steps["Ordinary CPU suite (one shard)"]
+    assert "if" not in cpu
+    assert cpu["run"] == f"python scripts/validate.py cpu --require-cpu-wheel --shard ${{{{ matrix.shard }}}}/{count}"
+    assert steps["Capped local regression"]["if"] == "matrix.shard == 1"
+    assert steps["Upload test timings and results"]["with"]["name"] == "cpu-test-results-shard-${{ matrix.shard }}"
+    # `test` is the required check: it always runs, and off the record-only path
+    # anything but a successful matrix (failed, cancelled, skipped) fails it.
+    test = ci["jobs"]["test"]
+    assert test["needs"] == ["classify", "test-shard"]
+    assert test["if"] == "always()"
+    gate = test["steps"][0]
+    assert gate["if"] == "needs.classify.outputs.records_only != 'true'"
+    assert gate["env"] == {"SHARDS_RESULT": "${{ needs.test-shard.result }}"}
+    assert '[ "$SHARDS_RESULT" = "success" ]' in gate["run"].splitlines()
+    assert "continue-on-error" not in gate
+    assert "continue-on-error" not in test
+
+
+def _ci_shard_count() -> int:
+    import yaml
+
+    ci: dict[str, Any] = yaml.safe_load((validate.ROOT / ".github/workflows/ci.yml").read_text())
+    return len(ci["jobs"]["test-shard"]["strategy"]["matrix"]["shard"])
+
+
+def test_shards_partition_every_test_file_in_both_phases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Read from the pytest commands the runner launches, one run per shard."""
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: None)
+    seen: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(validate.subprocess, "run", fake_run)
+    count = _ci_shard_count()
+    # Every file pytest would collect by its default python_files patterns.
+    tests = validate.ROOT / "tests"
+    collected = sorted({path.relative_to(validate.ROOT).as_posix()
+                        for pattern in ("test_*.py", "*_test.py") for path in tests.rglob(pattern)})
+    assert len(collected) > 800
+    timings = json.loads((validate.ROOT / validate.SHARD_DURATIONS).read_text())
+    assigned: list[str] = []
+    for index in range(1, count + 1):
+        seen.clear()
+        assert validate.main(["cpu", "--threads", "auto", "--shard", f"{index}/{count}",
+                              "--report-dir", str(tmp_path)]) == 0
+        parallel, serial = ([arg for arg in command if arg.startswith("tests/")] for command in seen)
+        assert parallel == serial
+        assert parallel
+        assigned += parallel
+    assert sorted(assigned) == collected
+    # Files the timings do not list are assigned too, and a stale timing adds nothing.
+    extra = [*collected, "tests/test_not_in_the_timings.py", "tests/sub/other_test.py"]
+    assert not {*extra[-2:]} & {*timings["serial"], *timings["xdist"]}
+    stale = {phase: {**files, "tests/test_deleted_long_ago.py": 500.0} for phase, files in timings.items()}
+    for durations in (timings, stale, {}):
+        shards = validate.assign_shards(extra, durations, count)
+        assert len(shards) == count
+        assert sorted(name for shard in shards for name in shard) == sorted(extra)
+    assert validate.assign_shards(collected, timings, count) == validate.assign_shards(reversed(collected), timings, count)
+
+
+@pytest.mark.parametrize("value", ["0/10", "11/10", "1/0", "3", "1/10/2", "a/b", "-1/10", " 1/10", "1.0/10", ""])
+def test_shard_rejects_malformed_and_out_of_range_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, value: str,
+) -> None:
+    def no_launch(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a rejected --shard must not launch anything")
+
+    monkeypatch.setattr(validate, "preflight", no_launch)
+    monkeypatch.setattr(validate.subprocess, "run", no_launch)
+    with pytest.raises(SystemExit) as exit_info:
+        validate.main(["cpu", f"--shard={value}", "--report-dir", str(tmp_path)])
+    assert exit_info.value.code == 2
+
+
+def test_shard_applies_only_to_the_cpu_suite(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        validate.main(["capped", "--shard", "1/2", "--report-dir", str(tmp_path)])
+    assert exit_info.value.code == 2
+    assert validate.parse_shard("10/10") == (10, 10)
+
+
+@pytest.mark.parametrize(
+    ("phase_codes", "timed", "expected"),
+    [
+        # pytest exits 5 when a phase selected no test.
+        ((5, 0), {"serial": {"tests/test_only.py": 1.0}, "xdist": {}}, 0),
+        ((0, 5), {"serial": {}, "xdist": {"tests/test_only.py": 1.0}}, 0),
+        ((5, 0), {"serial": {}, "xdist": {"tests/test_only.py": 1.0}}, 5),
+        ((0, 5), {"serial": {"tests/test_only.py": 1.0}, "xdist": {}}, 5),
+        ((5, 5), {"serial": {}, "xdist": {}}, 5),
+        ((5, 1), {"serial": {"tests/test_only.py": 1.0}, "xdist": {}}, 1),
+    ],
+)
+def test_a_shard_phase_without_tests_passes_only_where_no_file_is_timed_in_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    phase_codes: tuple[int, int], timed: dict[str, dict[str, float]], expected: int,
+) -> None:
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/test_only.py").write_text("def test_x():\n    pass\n")
+    (tmp_path / validate.SHARD_DURATIONS).write_text(json.dumps(timed))
+    monkeypatch.setattr(validate, "ROOT", tmp_path)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: None)
+    codes = iter(phase_codes)
+    monkeypatch.setattr(validate.subprocess, "run",
+                        lambda command, **_kwargs: subprocess.CompletedProcess(command, next(codes)))
+    assert validate.main(["cpu", "--threads", "auto", "--shard", "1/1", "--report-dir", "results"]) == expected
+    # Unsharded, an empty phase stays a failure.
+    codes = iter(phase_codes)
+    assert validate.main(["cpu", "--threads", "auto", "--report-dir", "results"]) != 0
 
 
 def test_every_test_that_reads_the_records_is_in_the_records_suite() -> None:

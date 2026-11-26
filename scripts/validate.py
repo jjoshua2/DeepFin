@@ -11,11 +11,13 @@ import argparse
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 import importlib
+import json
 import os
 from pathlib import Path
 import platform
 import re
 import shlex
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -64,6 +66,12 @@ RECORD_TESTS = (
     "tests/test_validation_runner.py",
     "tests/test_verify_evidence_stamps.py",
 )
+# Per-file test seconds measured in CI, by phase; scripts/ci_file_durations.py
+# regenerates it from the junit reports. It only balances the shards: a file it
+# does not list is still assigned (at the median), so a stale file cannot drop a test.
+SHARD_DURATIONS = "tests/ci_file_durations.json"
+# One xdist second costs this much wall time next to one serial-phase second.
+XDIST_WEIGHT = 0.25
 THREAD_VARS = (
     "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
     "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
@@ -102,6 +110,87 @@ def split_serial_phase(command: list[str]) -> tuple[list[str], list[str]]:
     parallel[marker] = f"({command[marker]}) and not serial"
     serial[marker] = f"({command[marker]}) and serial"
     return parallel, serial
+
+
+def parse_shard(text: str) -> tuple[int, int]:
+    """``K/N`` as ``(K, N)`` with ``1 <= K <= N``; anything else is a ValueError."""
+    match = re.fullmatch(r"([1-9][0-9]*)/([1-9][0-9]*)", text)
+    if match is None or int(match[1]) > int(match[2]):
+        raise ValueError(f"--shard must be K/N with 1 <= K <= N, got {text!r}")
+    return int(match[1]), int(match[2])
+
+
+def shard_universe(root: Path) -> list[str]:
+    """Every file pytest collects under ``tests/`` (its default ``python_files``)."""
+    tests = root / "tests"
+    found = {*tests.rglob("test_*.py"), *tests.rglob("*_test.py")}
+    return sorted(path.relative_to(root).as_posix() for path in found if path.is_file())
+
+
+def shard_cost(serial: float, xdist: float, xdist_max: float) -> float:
+    """Predicted wall seconds of one shard's tests.
+
+    The serial phase is one process, so its seconds add up. The xdist phase
+    spreads files over workers but ``--dist loadfile`` keeps a file on one
+    worker, so it cannot finish before its longest file does.
+    """
+    return serial + max(xdist_max, xdist * XDIST_WEIGHT)
+
+
+def assign_shards(files: Iterable[str], durations: Mapping[str, Mapping[str, float]], count: int) -> list[list[str]]:
+    """Partition ``files`` into ``count`` shards of balanced predicted wall time.
+
+    Deterministic greedy packing: longest file first, each into the shard whose
+    cost after taking it is lowest (ties to the lowest shard). The partition is
+    over ``files`` — the files on disk — never over the timings: a file with no
+    timing gets the median as serial-phase seconds, the phase that is not
+    spread over workers.
+    """
+    serial, xdist = durations.get("serial", {}), durations.get("xdist", {})
+    known = [float(value) for value in (*serial.values(), *xdist.values())]
+    median = statistics.median(known) if known else 1.0
+    timed: list[tuple[float, float, str]] = []
+    for name in sorted(set(files)):
+        in_serial, in_xdist = float(serial.get(name, 0.0)), float(xdist.get(name, 0.0))
+        if name not in serial and name not in xdist:
+            in_serial = median
+        timed.append((in_serial, in_xdist, name))
+    timed.sort(key=lambda item: (-(item[0] + item[1]), item[2]))
+    shards: list[list[str]] = [[] for _ in range(count)]
+    loads = [(0.0, 0.0, 0.0)] * count
+    for in_serial, in_xdist, name in timed:
+        after = [(load[0] + in_serial, load[1] + in_xdist, max(load[2], in_xdist)) for load in loads]
+        best = min(range(count), key=lambda index: (shard_cost(*after[index]), index))
+        loads[best] = after[best]
+        shards[best].append(name)
+    return [sorted(shard) for shard in shards]
+
+
+def shard_files(root: Path, index: int, count: int) -> tuple[list[str], set[str]]:
+    """The test files of shard ``index`` (1-based) of ``count``, and its timed phases.
+
+    The second value names the phases (``xdist``, ``serial``) in which the
+    timings place at least one of the shard's files: such a phase must run tests.
+    """
+    try:
+        durations = json.loads((root / SHARD_DURATIONS).read_text(encoding="utf-8"))
+        files = assign_shards(shard_universe(root), durations, count)[index - 1]
+        return files, {phase for phase in ("xdist", "serial") if set(files) & set(durations.get(phase, {}))}
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"cannot read {SHARD_DURATIONS}: {exc}") from exc
+
+
+def shard_phase_code(code: int, phase: str, timed_phases: set[str]) -> int:
+    """Exit code of one phase of a sharded run.
+
+    pytest exits 5 when it selected no test. A shard may hold no file of one
+    phase (for example only serial files), so 5 passes there; where the timings
+    place a file of the shard in the phase, 5 stays a failure.
+    """
+    if code == 5 and phase not in timed_phases:
+        print(f"{phase} phase: no test file of this shard runs in it", flush=True)
+        return 0
+    return code
 
 
 # Change-scoped selection of script-only test files. Any doubt runs everything:
@@ -393,9 +482,21 @@ def main(argv: list[str] | None = None) -> int:
                         help="cpu suite: skip script-only test files that the changes since the merge base "
                              "with REF (plus uncommitted and untracked files) cannot affect, as CI does on a "
                              "pull request. See docs/development.md.")
+    parser.add_argument("--shard", metavar="K/N",
+                        help="cpu suite: run only the test files of shard K of N (both phases). The N shards "
+                             "partition every test file; CI runs them as parallel jobs.")
     args = parser.parse_args(argv)
     if args.changed_vs and args.suite != "cpu":
         parser.error("--changed-vs applies only to the cpu suite")
+    shard: tuple[int, int] | None = None
+    timed_phases: set[str] = set()
+    if args.shard is not None:
+        if args.suite != "cpu":
+            parser.error("--shard applies only to the cpu suite")
+        try:
+            shard = parse_shard(args.shard)
+        except ValueError as exc:
+            parser.error(str(exc))
     if args.threads != "auto" and (not args.threads.isdecimal() or int(args.threads) < 1):
         parser.error("--threads must be a positive integer or auto")
     workers = args.workers or ("auto" if args.threads == "auto" else "1")
@@ -435,6 +536,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"compile_cache={cache_root} CXX={env.get('CXX', 'PATH default')} "
                       "compile_threads=1 MAX_JOBS=1", flush=True)
             preflight(args.suite, backend, args.require_cpu_wheel)
+            if shard is not None:
+                # Explicit paths, so each shard collects only its own files. A
+                # phase left with no test exits 5 and fails the shard.
+                selected, timed_phases = shard_files(ROOT, *shard)
+                print(f"shard {shard[0]}/{shard[1]}: {len(selected)} test files", flush=True)
+                if not selected:
+                    raise RuntimeError(f"shard {shard[0]}/{shard[1]} has no test files")
+                for phase in (command, serial_command):
+                    if phase is not None:
+                        phase.extend(selected)
             if args.suite == "cpu":
                 scope_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-scope-")))
                 apply_change_scope(env, args.changed_vs, scope_dir)
@@ -445,6 +556,9 @@ def main(argv: list[str] | None = None) -> int:
                 # Always run it: a failure in one phase must not hide the other's.
                 print(f"executing: {shlex.join(serial_command)}", flush=True)
                 serial_code = subprocess.run(serial_command, cwd=ROOT, env=env, check=False).returncode
+                if shard is not None and (code, serial_code) != (5, 5):
+                    code = shard_phase_code(code, "xdist", timed_phases)
+                    serial_code = shard_phase_code(serial_code, "serial", timed_phases)
                 code = code or serial_code
     except (ImportError, OSError, RuntimeError) as exc:
         print(f"validation preflight/launch failed: {exc}", file=sys.stderr, flush=True)
