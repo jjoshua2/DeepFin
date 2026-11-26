@@ -1,0 +1,298 @@
+# 2026-11-26: RL — deep wide search on a quarter of moves, fast on the rest, and an ordering term on its ≥ 2-visit children (pre-registration)
+
+**Status: design only, for review.** No GPU work, no launch. Launch needs this record merged, the engine item below
+(only for the ≥ 3-visit variant), a launch addendum that pins the commit, the bank scripts' sha256 and the Stage 0
+numbers, and a free GPU.
+
+## Why: the owner's ask, and what the full-width kill did and did not close
+
+The owner, 2026-11-26: "for the wide test i thought we were going to test widening it to like 80 so we'd have room
+for each move to get 2 visits since that is what it took to get better value head then base? 1 didn't seem to help
+but 2 did. and we could even experiment giving each 3 with like 200 nodes etc along with doing like 75% of the
+moves fast?"
+
+- **What the kill covers.** The full-width record was killed at Stage 1
+  ([record](2026-11-21-rl-run1-root-full-width.md#results-and-verdict-2026-11-26-killed-at-stage-1-the-record-stops)).
+  - It covers one claim: with the SL base as actor, a wide search on **every** ply at equal cost (33 sims) gives a
+    **policy** target worse than stock 64 by deep SF 8M: +2.15 cp [+0.13, +4.13], a fragile, tail-driven kill.
+  - Wide at matched sims (64, 1.54× the cost) was null: +0.65 [−0.89, +2.20]
+    (`RFW/stage1/scores/scores.json` [`9969fa7d`]).
+  - Nothing has ever trained on the ≥ 2-visit child values, and no deep/fast allocation has been tested.
+- **"1 didn't help, 2 did".** This is the two-visit scoping (`RC/two-visit-children-scoping/README.md`
+  [`7e5a9693`]).
+  - The searched order of exactly-2-visit children beats the net's own prior against deep SF: B +0.0267
+    [+0.0086, +0.0444], C +0.0242 [+0.0069, +0.0430].
+  - 1-visit children were not shown informative: a 1-visit q is the collecting net's own value.
+  - That is an ordering measurement on one net with an SF reference. It is not a value-head result.
+- **More sims per root did not buy more on the proxies** (`RC/visits-per-child-scoping/README.md` [`a77b9936`],
+  `RC/visits-per-child-scoping/out/analysis.json` [`f15c8937`]).
+  - All-children ordering: W80 −0.0018, W128 −0.0039 [−0.0075, −0.0001], W270 −0.0039, each against wide@64.
+  - BT4 CE of the policy target rises with sims: 2.390 at wide@64, 2.427 at W80, 2.532 at W128, 2.810 at W270.
+  - These are one net and proxy rulers. The owner's question is whether **training** on the deep moves helps, so it
+    is tested by training.
+- **What changed today: generation size matters.** The data-volume run trained `gen1_baked.pt` once over 2.77M
+  rows (kC):
+  - kC vs the parent: +5.08 [+0.48, +9.67];
+  - kC vs the SL base: +8.52 [+4.00, +13.05];
+  - the 1× bank vs the parent: −5.13 [−9.47, −0.79];
+  - kC minus 1× passes the registered one-sided contrast
+  (`~/chess-artifacts/operations/rl-run1-volume/verdicts.json` [`fab91794`]).
+  - So a deep-move design is costed in **policy rows per GPU-hour** and judged at **equal GPU-hours**. That is the
+    test it must pass.
+
+**Evidence log first.** I grepped `2026-11-21-rl-loop-evidence-log.md` for playout cap, full-prob, fast,
+value-only, root_full_width, two-visit and visits-per-child. Everything this record cites is banked:
+- the playout-cap throughput at 64 / 16 sims (11-21);
+- the two scoping banks (11-22);
+- the full-width Stage 0 / 1 (11-26);
+- the data-volume matches (11-26).
+
+No row measures training on deep/fast data or on an ordering term over ≥ 2-visit children.
+
+## Two ideas, two readouts
+
+| Idea | Arm | Compared with | Readout |
+|---|---|---|---|
+| **A. Allocation:** deep wide search on a share p of plies, fast elsewhere, only deep plies stored | **D** (deep/fast collection, stock training recipe) | **C** (stock 64 on every ply), equal collection GPU-hours | Readout A: d̄_D − d̄_C |
+| **B. Ordering term** over root children with ≥ 2 visits | **D+O** (the same D rows, plus the sibling screen's term) | **D** | Readout B: d̄_{D+O} − d̄_D |
+
+The arms are separated so that each idea gets its own readout. B is read on D's collection, so its only difference
+from D is the term.
+
+## Collection (idea A)
+
+**The collector already does this, on the C path, today.** No engine work is needed for D.
+- `--full-prob p` draws full plies per game from the game's own RNG (`selfplay/network_turn.py` `_draw_is_full`).
+- A full ply searches `--sims`, a fast ply `--fast-sims`. The per-game budgets go into one C runner call
+  (`combined_sims`).
+- `--root-full-width` runs round 0 **only on full plies**: `per_game_root_full_width` is the `is_full` mask, which
+  reaches `mcts/gumbel_c.py` `_full_width_round0(board_mask=…)`.
+- **topk changes only the deep plies.** Width is min(topk, L, (budget + 1) // 2) (`_realized_candidate_width`), so a
+  16-sim fast ply ranks at most 8 candidates whatever the topk. One topk does both jobs.
+- **Fast plies store no row.** `fast_value_rows` defaults to False (`CollectSettings`; the comment there, and
+  `finalize`).
+
+**D's settings:**
+- p = 0.25, deep plies at 80 sims with `--root-full-width` and topk 40, which is (80 + 1) // 2, the smallest topk
+  giving the full realised width at 80 sims;
+- fast plies at 16 sims, storing no row;
+- everything else the pilot's flags, as C.
+- Why 80: W80 visits 22.95 of 23.62 legal children ≥ 2 times on the audit rows, against 21.42 for wide@64
+  (scoping table, "children ≥ 1 / ≥ 2").
+- Why 16 fast sims and p = 0.25: that is the measured playout cap (below), so the fast half is banked, not a guess.
+
+**One variable at a time: fast plies store nothing (`--fast-value-rows` off).**
+- A fast-ply value-only row would carry a 16-sim root q into the Zq value target. That is a second, different
+  value target. In the RL pilot, value-target choices alone cost 10–20 Elo (raw Zq −10, S −20; evidence log, pilot
+  rows).
+- So D's stored rows are deep plies only, with the same value target as C's rows.
+- A value-only-rows variant is a later record, after Readout A.
+
+**Behaviour of fast plies, from the code and banked** (evidence log, caveat 11 and the 11-21 playout-cap row):
+- no root noise;
+- the same move-temperature schedule as full plies;
+- the tree is reused across fast and full plies (carried visits on full rows: 8.5 at p = 0.25 against 12.1);
+- games are more decisive: 0.606 decisive at p = 0.25 against 0.510.
+
+These are part of what "deep/fast" means, so they are confounds of arm D, not removed (see Confounds).
+
+**The ≥ 3-visit variant (D3, conditional; this one needs engine work).**
+- Round 0 gives each unvisited child **one** visit (`_full_width_round0`), and sequential halving then concentrates
+  the rest. So more sims do not give every child 3 visits: W270 has only 16.47 of 23.62 children with ≥ 3.
+- D3 is p = 0.25, with a **k = 3 visit round 0** plus 128 halving sims (about 3 × 23.6 + 128 ≈ 200 leaves per deep
+  ply), so every legal child gets ≥ 3.
+- **Engine work, about one day:**
+  - Add `root_full_width_visits` (default 1) to `GumbelConfig`.
+  - Round 0 repeats its forced pass k times. The docstring says the unchanged C state machine already runs "a board
+    whose candidate list is its k unvisited children and whose budget is k", so no C or ABI change is expected.
+  - Thread it through `CollectSettings` → `SearchConfig` → `GumbelConfig` → `run_gumbel_root_many_c`.
+  - It is orchestrated in `gumbel_c.py`, the C runner's Python driver, so it is not one of the GumbelConfig fields
+    the C path drops. The Python reference search already refuses `root_full_width`, and must refuse k > 1 too.
+- **Take-effect proof:**
+  - read from the **stored rows**, the consumer: on every deep row of a fresh root, the minimum root-child visit
+    count over legal children is ≥ k, and `root_prelude_visits` = k × the unvisited legal count;
+  - a CPU unit test with a mutant (k ignored ⇒ the test fails);
+  - Stage 0's realised gate.
+- D3 runs Stages 0–1 only if the engine item is merged. It enters Stage 2 only if it passes Stage 1 and Readout A
+  reads "D beats C". It is never a substitute for D.
+
+**Projected cost: an estimate, which Stage 0 replaces.**
+- Measured stock 64 on the full-width record's Stage 0 (3 × 128, SL base, pin `0d4d11572`): 152 rows/s steady and
+  69.4 forwarded rows per stored row (`RFW/stage0/summary.jsonl` [`cebc9f1a`]).
+- That table's on@64 legs (103.0 forwarded / row, 99.1 rows/s) scale with forwarded rows per stored row to within 3%.
+- Leaves per ply from the scoping bank: stock 63.4, W80 105.0, fast 16 ≈ 16.
+- Forwarded rows per stored row for D ≈ 1.1 × (0.25 × 105.0 + 0.75 × 16) / 0.25 ≈ 168. That is about 63 stored
+  rows/s, **≈ 0.41× C's policy rows per GPU-hour**, with about 1.65× the games.
+- D3 ≈ 1.1 × (0.25 × 199 + 12) / 0.25 ≈ 272 forwarded per row. That is ≈ 39 rows/s, ≈ 0.26×.
+- **Effective rows go the other way.** Within-game correlation (ICC 0.03) discounts 95 rows per game more than 24.
+  At p = 0.25 the measured 64 / 16 cap gave 283k effective policy rows per 1.6 GPU-h, against 207k at p = 1 (11-21
+  playout-cap row, `RC/collect-throughput/playout-cap/README.md` [`5e0f2666`]). D's deeper plies cost more than
+  that cap's, so D's effective rate is expected near C's, not above it.
+  - The decision is not taken on this arithmetic. It is the reason the comparison is at equal GPU-hours.
+
+## Training use
+
+**Policy target: deep plies only, by construction.** D stores nothing else. Training is the kC recipe unchanged:
+- one presentation per row, mirror 0.5, batch 512;
+- LR 3e-6 flat, Aurora, Zq flags;
+- the same recalibration fit and bake (data-volume record, "Training, checkpoints and recalibration").
+
+Exactly-once means that D, with fewer rows, takes fewer updates than C at equal GPU-hours (Confounds).
+
+**The ordering term (idea B) is the sibling screen's term, reused and not redesigned**
+([sibling screen rev 7](2026-11-21-rl-run1-sibling-value-screen.md)):
+- the root-list unit over pairs of eligible children, eligibility being **≥ 2 visits**;
+- pair weights with ρ = 0.08 (`n_eff = n / (1 + (n − 1)·0.08)`);
+- the forward chunked at 64 pairs, with rev 7's fallback;
+- its strength sealed by rev 7's cost probe.
+
+On D's collection the term is restricted to deep rows, which are the only rows. The root-list sidecar comes from the
+collector's `record_root_stats` (always on in the collect).
+
+**Memory gate: mandatory, before registration of any D+O number.**
+- Revision 6 died on update 2 with an OOM. Peak reserved ≈ 16.95 + 0.0574 × pairs GiB: 31.6 GiB at 255 pairs, about
+  20.6 at a 64-pair chunk (`~/chess-artifacts/operations/rl-run1-sibling/oprun/diag_mem/RESULT.md` [`0468d345`]).
+- D's deep roots have about 23 eligible children, so up to about 250 pairs per root; chunking is required.
+- The gate is rev 7's **3-update GPU smoke** on D's own pool, with peak memory written after each update:
+  - abort if peak reserved > 0.85 × the device total, if any update dies, or if memory grows by more than 0.10 GiB
+    from update 2 to 3;
+  - no retry into a pass.
+- **Sequencing:** D+O trains only after the sibling screen's Part 1 has a Stage A reading on the pilot's frozen data.
+  The term must first be shown not to damage, under its own record.
+
+## Stages
+
+### Stage 0: cost (GPU ≈ 1.0 h; ≈ 1.5 h with D3)
+
+- **Legs:** C, D, D, C, at 3 × 128 and 1,152 games each, at the launch pin (main containing #1511), with the actor
+  `kC_baked.pt` (`c48a7b2c1cc7…`). D3 adds two legs if it is built.
+- **Method:** the full-width record's Stage 0 scripts (`run_stage0.sh` v10 with its sealed-games read).
+- **Reported per leg:**
+  - steady stored rows/s, and forwarded rows per stored row;
+  - stored rows per game, and the effective rows per game (ICC 0.03);
+  - games/h;
+  - peak MiB, with the 83% usable limit;
+  - the realised gates: leaf buffer 128 × 2 × topk, chunk rows 512, 0 eager forwards, 0 flushes;
+  - on D legs, `root_prelude_visits` > 0 on every stored row, 0 stored fast rows, and stored share ≈ p by game.
+- **Output:** the GPU-hours G_C that C needs for 2.8M stored rows (the kC dose; ≈ 5.1 GPU-h at 152 rows/s). D gets
+  the same G_C, and its game count is set from its measured rate.
+- **Kill (D):** any realised gate fails, or `check_vram` refuses at topk 40.
+  - If `check_vram` refuses, topk 32 is the registered fallback: same realised width on positions with ≤ 32 legal
+    moves, stated as a deviation.
+  - If a gate fails, the arm is unread until a fix is reviewed.
+
+### Stage 1: target quality (CPU; GPU ≈ 0.1 h only for D3)
+
+**Arms, from banked searches.**
+- W80 is already banked on the 2,433 leak-free audit rows: `RC/visits-per-child-scoping/out/arm_W80.npz`
+  [`5e32883d`].
+- A CPU adapter turns its per-child arrays into the full-width Stage 1 bank's format, mapping its action ids to
+  `lc0_1858` through the shared lookups in `moves/torch_maps.py`.
+- W80 was searched at `fd8c0ce08` with the evaluator capped at 512. It flushed and resumed 13 times (ABI-11
+  semantics, no starved leaves), so its targets are valid.
+- The banked R64n is the reference, and the full-width Stage 1 showed that M64off reproduces it: top-1 0.9737, paired
+  −0.075 [−0.286, +0.145].
+- D3 needs one new GPU search (about 0.1 h) once the engine item exists.
+
+**Scorer:** the full-width record's `stage1_score.py` (`RFW/stage1/stage1_score.py` [`b1e62b3a`]), unchanged:
+- deep SF 8M `exp_cp_lb` as the primary;
+- Ceres expected loss;
+- child-value error and clear-pair ordering.
+
+The net's own deeper search is never a reference.
+
+**Rule (per deep arm, paired against R64n on `exp_cp_lb`):**
+- **STOP that arm iff LB95 > 0 and the estimate is > +1.2 cp** (the seed-noise half-width).
+- Otherwise it proceeds to Stage 2.
+
+**Report-only:** leave-top-game-out and drop-two-games intervals, since the full-width kill was tail-driven.
+
+Stage 1 judges only the deep ply's policy target. It cannot see the allocation, which only Stage 2 tests.
+
+### Stage 2: the generation at equal GPU-hours (GPU ≈ 22 h)
+
+**Collections.** From `kC_baked.pt`, at the launch pin, one seed per arm:
+- C: stock 64 on every ply, ≈ 2.8M rows in G_C;
+- D: deep/fast, in the same G_C (≈ 1.15M rows projected).
+
+**Training.** Both from `kC_baked.pt` with the kC recipe, then recal fit and bake. D+O is the D rows plus the term,
+after the memory gate passes.
+
+**Matches.** Each arm plays 12,800 games against the parent `kC_baked.pt`, with the data-volume record's rules
+unchanged:
+- `arena_standard.py` matched sims, 64 v 64, plain seats, baked files, `rl-run1-pilot/openings/eval.pgn`;
+- per-seat resume; a damage-only 800-game screen;
+- `arena_seat_balanced_pool.py`'s normal interval over opening keys.
+
+All arms share one seed, so they play the same book draw. No pairing is claimed.
+
+**The deciding yardstick, exactly:**
+```bash
+# from the launch pin's worktree; DF = the new bank (rl-deep-fast/), created at launch
+PYTHONPATH=. $PY $DF/prelaunch/verdicts.py final $DF
+```
+- `verdicts.py` is the data-volume bank's `~/chess-artifacts/operations/rl-run1-volume/prelaunch/verdicts.py`
+  [`f487d849`], with its arm labels changed (C, D, D+O for kC, k1) and nothing else changed.
+- Per match: improves iff LB95 > 0, damage iff UB95 < 0, adoptable iff LB95 > −10 Elo.
+- **Readout A:** Δ̂_DC = d̄_D − d̄_C on the score scale, SE = √(SE_D² + SE_C²).
+  - **"Deep/fast beats stock at equal GPU-hours" iff Δ̂_DC − 1.645·SE > 0, strictly.**
+  - **"Deep/fast loses" iff Δ̂_DC + 1.645·SE < 0.** Otherwise unread.
+  - MDE80 ≈ 8.1 Elo (SE ≈ 3.24 Elo-equivalent; data-volume record, power).
+- **Readout B:** Δ̂_OD = d̄_{D+O} − d̄_D, the same rule and wording ("the term helps / hurts / unread").
+- D+O plays only if D's own match does not read damage.
+- The bootstrap is a check only (B = 20,000, opening key as unit). No threshold changes in flight.
+
+| Outcome | Licenses |
+|---|---|
+| A: D beats C | at the kC dose and this actor, the deep/fast collection beats stock 64 per GPU-hour. D3 (if built and Stage 1-clean) is registered next, against D |
+| A: D loses | deep/fast at p = 0.25 / 80 / 16 is worse per GPU-hour than stock 64 here. Says nothing about value-only fast rows or other p |
+| A unread | no claim. Each arm's own vs-parent reading is reported |
+| B: the term helps | the ordering term over ≥ 2-visit children adds strength on deep/fast data |
+| either arm vs parent | reported as in the data-volume record. C is also the line's next stock generation, so its reading is useful whatever A says |
+
+## Confounds (named, not removed)
+
+1. **Rows and updates.**
+   - At equal GPU-hours, D trains on about 0.4× C's rows, and under exactly-once on proportionally fewer updates.
+   - Readout A compares two collection policies at equal cost, and does not separate row count from row quality. That
+     is the question asked.
+   - The data-volume result (more rows helped) is the prior against D.
+2. **Game distribution.** D's fast plies have no root noise and its games are more decisive (0.606 against 0.510 at
+   p = 0.25). Value targets come from a different outcome mix.
+3. **Two changes in "deep".** Deep plies change both width (round 0, topk 40) and budget (80). The full-width Stage 1
+   already showed that width alone at 64 sims is a null on the policy target.
+4. **Tree reuse** carries fast-ply visits into deep roots: 8.5 carried visits against 12.1.
+5. **Actor and parent** are `kC_baked.pt`, not the SL base. Every scoping number cited is the SL base's.
+6. **The pin** must contain #1511. If #1522 merges first, its `check_vram` applies, and it marks topk 40 / 80 sims as
+   extrapolated.
+
+## GPU-hours
+
+| Stage | Item | GPU-h |
+|---|---|---:|
+| 0 | four legs (C, D, D, C), 1,152 games each | ≈ 1.0 |
+| 0 | D3 two legs (if built) | ≈ +0.5 |
+| 1 | CPU scoring; D3 search (if built) | ≈ 0 / +0.1 |
+| 2 | collections C and D, G_C each | ≈ 10.2 |
+| 2 | training: C (≈ 5,500 updates), D, D+O, plus 3-update smoke | ≈ 1.2 |
+| 2 | recal fits + bake, 3 arms | ≈ 1.2 |
+| 2 | matches C, D, D+O vs parent, 12,800 each | ≈ 8.7 |
+| | **total (no D3)** | **≈ 22** |
+
+Rates: 0.3164 s/update and 1.45 GPU-h per 6,400 games (data-volume record); 152 rows/s stock (full-width Stage 0).
+
+## Recovery
+
+- Nothing live changes: no yaml, no live tree, no deployed code.
+- Every output goes to a new bank (`rl-deep-fast/`).
+- `kC_baked.pt` stays the line's head unless an arm improves by its own registered reading, and adoption is a later
+  record.
+- A failed stage is moved aside by the bank's `clear_step` and rerun from its inputs. Matches resume per seat.
+
+## What the code cannot do today
+
+- **D3's every-child-≥ 3 visits:** needs `root_full_width_visits` (above). Everything D needs exists.
+- **Per-ply topk:** not needed. Width is capped by the budget on fast plies.
+- **A per-row "fast" flag:** there is none (manifest only, caveat 11). Not needed, since D stores no fast rows.
+- **The ordering term on D:** exists (`--w-sibling`, rev 7). Its strength and chunk are sealed by the sibling
+  screen's addendum, which has not launched. Readout B waits for it.
