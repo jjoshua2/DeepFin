@@ -1,6 +1,6 @@
 # 2026-11-26: RL — deep wide search on a quarter of moves, fast on the rest, and an ordering term on its ≥ 2-visit children (pre-registration)
 
-**Status: design only, for review.** No GPU work, no launch. Launch needs this record merged, the engine item below
+**Status: design merged; launch addendum below (2026-11-26).** No GPU work has run under this record. Launch needs this record merged, the engine item below
 (only for the ≥ 3-visit variant), a launch addendum that pins the commit, the bank scripts' sha256 and the Stage 0
 numbers, and a free GPU.
 
@@ -180,10 +180,13 @@ collector's `record_root_stats` (always on in the collect).
       leg-mean prelude > 0.
     - A row with 0 prelude is valid: under tree reuse a root whose legal children are all already visited gets
       none, and solved roots skip round 0. Shortcut rows are counted and reported;
-    - **stored share:** the pooled share of net plies stored, |share − 0.25| ≤ 0.02. finalize's drops of unresolved
-      games also move it, so they are reported beside it.
-- **Output:** the GPU-hours G_C that C needs for 2.8M stored rows (the kC dose; ≈ 5.1 GPU-h at 152 rows/s). D gets
-  the same G_C, and its game count is set from its measured rate.
+    - **stored share:** stored rows ÷ (games × `mean_plies_after_book`), both from the collect's own `stats.json`,
+      |share − 0.25| ≤ 0.02, applied to each process's collect (so the pooled share passes too). The denominator
+      counts every ply after the book of every sealed game, so finalize's drops (single-legal-move plies, unresolved
+      games) sit inside it; the expected share is ≈ 0.247. Pinned in the launch addendum (`stage0/row_gates.py`).
+- **Output:** the GPU-hours G_C that C needs for 2.8M stored rows (the kC dose; ≈ 5.1 GPU-h at 152 rows/s), and
+  D's steady games per hour. Neither sets D's final dose: Stage 2's dose rule (below) sizes D from C's realised
+  hours.
 - **Kill (D):** any realised gate fails, or `check_vram` refuses at topk 40.
   - If `check_vram` refuses, topk 32 is the registered fallback: same realised width on positions with ≤ 32 legal
     moves, stated as a deviation.
@@ -194,15 +197,19 @@ collector's `record_root_stats` (always on in the collect).
 **Arms, from banked searches.**
 - W80 is already banked on the 2,433 leak-free audit rows: `RC/visits-per-child-scoping/out/arm_W80.npz`
   [`5e32883d`].
-- A CPU adapter turns its per-child arrays into the full-width Stage 1 bank's format, mapping its action ids to
-  `lc0_1858` through the shared lookups in `moves/torch_maps.py`.
+- A CPU adapter scatters its per-child arrays into the full-width Stage 1 bank's format. It maps no moves: the
+  banked action ids are already `lc0_1858`, mapped upstream by the scoping bank's `alloc_bank.py`
+  (`move_to_index_for_encoding`).
 - W80 was searched at `fd8c0ce08` with the evaluator capped at 512. It flushed and resumed 13 times (ABI-11
   semantics, no starved leaves), so its targets are valid.
 - The banked R64n is the reference, and the full-width Stage 1 showed that M64off reproduces it: top-1 0.9737, paired
   −0.075 [−0.286, +0.145].
 - D3 needs one new GPU search (about 0.1 h) once the engine item exists.
 
-**Scorer:** the full-width record's `stage1_score.py` (`RFW/stage1/stage1_score.py` [`b1e62b3a`]), unchanged:
+**Scorer:** a revision of the full-width record's `stage1_score.py` (`RFW/stage1/stage1_score.py` [`b1e62b3a`])
+whose only change is the arm list and the R64n reference: it reads the arms from the adapted bank and writes one
+`<arm>_minus_R64n` pair per arm. Pinned by sha256 in the launch addendum, with a fixture showing the W80 − R64n pair
+for `exp_cp_lb` and `mass_unscored`. Its scores:
 - deep SF 8M `exp_cp_lb` as the primary;
 - Ceres expected loss;
 - child-value error and clear-pair ordering.
@@ -228,10 +235,17 @@ Stage 1 judges only the deep ply's policy target. It cannot see the allocation, 
 
 **Collections.** From `kC_baked.pt`, at the launch pin, one seed per arm:
 - C: stock 64 on every ply, ≈ 2.8M rows in G_C;
-- D: deep/fast, in the same G_C (≈ 1.15M rows projected).
-- **Equal GPU-hours is checked, not assumed.** Both arms' realised collection wall-hours are reported, at the shape
-  Stage 0 measured (3 × 128, 3 processes, the same pin). **Readout A is read only if the realised D / C collection
-  hours are in [0.9, 1.1]**; otherwise it is "unread: unequal cost".
+- D: deep/fast, in the same G_C (≈ 1.15M rows projected), sized by the dose rule below.
+- **Equal GPU-hours is checked, not assumed.** The clock is each collect's own `active_seconds` (`stats.json`: the
+  orchestrator's wall minus `paused_seconds`, so a pause window never counts), at the shape Stage 0 measured
+  (3 × 128, 3 processes, the same pin). **Readout A is read only if the realised D / C active hours are in
+  [0.9, 1.1]**, and only if both clocks are complete (no game-level resume); otherwise it is "unread: unequal cost"
+  or "unread: cost unmeasured".
+- **Dose rule (launch addendum).** C runs first, with round(2.8M ÷ its Stage 0 rows per game) games; H_C is its
+  realised active hours. D's main collect gets round(0.85 × H_C × D's Stage 0 steady games per hour) games. After it
+  seals, if its hours are < 0.9 × H_C, one top-up collect (same flags, its own run dir, seed base + 100 + k for process k: disjoint from every
+  main-collect seed) gets
+  ceil((H_C − H_D,main) × the main collect's realised games per active hour) games, and D's hours are the sum.
 
 **Training.** Both from `kC_baked.pt` with the kC recipe, then recal fit and bake. D+O is the D rows plus the term,
 after the memory gate passes.
@@ -303,6 +317,9 @@ PYTHONPATH=. $PY $DF/prelaunch/verdicts3.py final $DF
    plies are stored at come from a different distribution than C's, not only a more decisive one.
 9. **The pin** must contain #1511. If #1522 merges first, its `check_vram` applies, and it marks topk 40 / 80 sims as
    extrapolated.
+10. **A D top-up draws its own openings.** If the dose rule needs a top-up collect, its run dir starts a fresh
+    opening cursor, so some of its openings can repeat the main collect's. The count of top-up starts present in the
+    main collect's `starts.txt` is reported beside Readout A.
 
 ## GPU-hours
 
@@ -336,3 +353,112 @@ Rates: 0.3164 s/update and 1.45 GPU-h per 6,400 games (data-volume record); 152 
   `--fast-sims`; the evidence log's caveat 11 ("manifest only") is out of date on this point.
 - **The ordering term on D:** exists (`--w-sibling`, rev 7). Its strength and chunk are sealed by the sibling
   screen's addendum, which has not launched. Readout B waits for it, until the date above.
+
+## Launch addendum (2026-11-26)
+
+Bank: `~/chess-artifacts/operations/rl-deep-fast/` (`DF`). Every file below is listed in `~/chess-artifacts/operations/rl-deep-fast/SHA256SUMS`
+[`7945de9c`], which `stage0/run_stage0_all.sh` verifies before any leg. Launch pin: `b0541c15a` (main with #1511
+and #1522; #1531 is docs only), in a detached worktree `rl-deep-fast-b0541c15a`.
+
+**1. Stage 1 scorer.** `~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_score.py` [`708bf777`] is the full-width scorer [`b1e62b3a`, kept beside it
+as `stage1_score.v0_rfw.py`] with only the arm list and the R64n reference changed (47 changed lines: the dry-run and
+bank branches read the arms from the adapted bank; the paired loop writes `<arm>_minus_R64n` for every arm except
+the reference; the full-width reproduction block is dropped). W80 enters through `~/chess-artifacts/operations/rl-deep-fast/stage1/adapt_scoping_arm.py`
+[`9708383b`], which scatters `RC/visits-per-child-scoping/out/arm_W80.npz` [`5e32883d`] into the bank format with no move mapping
+(its action ids are already `lc0_1858`, from the scoping bank's `alloc_bank.py`) (`~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_bank_W80.npz` [`96ebcf0e`]; duplicate (row, move) entries and target rows not summing to 1 are
+refused).
+- **Fixture:** `--dry-run-banked` (W80's slot filled with the banked R64n seed-2 search, so it validates the
+  scorer and is not a Stage 1 result) writes `paired.W80_minus_R64n` with `exp_cp_lb` −0.046 [−1.203, +1.096] and
+  `mass_unscored` −0.0005 [−0.0015, +0.0005], den 2,433 (`~/chess-artifacts/operations/rl-deep-fast/stage1/fixture_dry_run/scores.json` [`6c124fd2`]).
+  Seed noise reads inside the +1.2 cp kill, as it should.
+- The deciding read waits for this addendum's merge.
+
+**2. Coverage pre-check (banked; not the deciding read).** `~/chess-artifacts/operations/rl-deep-fast/stage1/coverage_precheck.py` [`2452e4c3`] on the
+2,433 rows: W80's mass on moves deep SF did not score is 0.0220 against R64n's 0.0183, **paired +0.0036
+[+0.0019, +0.0055]**, under the +0.01 gate (`~/chess-artifacts/operations/rl-deep-fast/stage1/coverage_precheck_W80.json` [`a81b50b1`]). **No SF top-up is needed.**
+Had it tripped, the top-up would have been 3,278 moves on 798 positions (moves with ≥ 1e-3 W80 mass and no SF
+score) at 8M nodes, cold TT, `searchmoves`, production Syzygy, on CPU.
+
+**3. Cost check.** The clock is each collect's `active_seconds` (not `wall_seconds`, never including
+`paused_seconds`); `~/chess-artifacts/operations/rl-deep-fast/prelaunch/cost_from_stats.py` [`ba02611e`] writes the bank's `cost.json` (written at Stage 2) from the sealed collects' own
+`stats.json`, with `clock_complete` false if any process resumed at game level. The dose rule is the registered
+top-up (Stage 2, above): D's main collect aims at 0.85 × H_C from D's Stage 0 rate, and a top-up sized from the
+main collect's own realised rate brings it to H_C. Why this and not the alternatives:
+- **Stopping D by hours is not available.** `<run>/STOP` drains to an unsealed collect, and an unsealed collect
+  cannot be trained on; there is no time-stop that seals.
+- **A dose fixed from the Stage 0 rate** voids Readout A on any rate miss above 10%.
+- **Splitting D into many chunks** gives each run dir a fresh opening cursor; one top-up of ≈ 15% bounds that to the
+  top-up's games (Confound 10).
+- Readout A is then voided only if D's realised rate is below 0.773 × its Stage 0 rate (0.85 ÷ 1.1) at the same
+  shape, or a clock is incomplete. The top-up's two run dirs must both reach D's training pool; the Stage 2
+  launcher's addendum shows this.
+- **Top-up seeds are disjoint from every main-collect seed** (base + 100 + k). With single-process collects the game
+  RNG and the opening permutation follow the seed alone, so "seed + 1" for process k would replay process k + 1's
+  games (non-author review of #1535). Confound 10's repeat count is kept.
+- **Also due in the Stage 2 launcher's addendum:** a scan for other GPU processes during each collect (or its SMI
+  samples), banked beside `cost.json`, since the guard checks only at start; and `verdicts3.py`'s bootstrap check
+  made unable to abort before `verdicts.json` is written (its d̄ reproduction is an exact float comparison that
+  exits).
+
+**4. Stored-share denominator.** games × `mean_plies_after_book`, both from each process's `stats.json` (Stage 0,
+above), applied per process by `~/chess-artifacts/operations/rl-deep-fast/stage0/row_gates.py` [`ba165cfe`].
+
+**5. `~/chess-artifacts/operations/rl-deep-fast/prelaunch/verdicts3.py`** [`2ca64d73`], as registered in Stage 2, reading the bank's `cost.json` (written at Stage 2) for the cost check (`D/C` of
+`active_seconds` in [0.9, 1.1], both `clock_complete`). `~/chess-artifacts/operations/rl-deep-fast/test/verdicts3_fixtures.py` builds synthetic `pool.json`
+banks and reaches every reading: per match improves / damage / adoptable / unread; Readout A beats / loses / unread,
+plus unread on unequal cost (D/C 1.2), on an incomplete clock and on a missing `cost.json`, and a read at D/C exactly
+0.9; Readout B helps / hurts / unread; D+O missing (B unread with its reason, A still reads, D+O's match "not
+played"); C missing (A unread, B still reads); D stopped by its screen (its match "damage (screen)", A and B
+unread). **23 of 23 pass.** `cost_from_stats.py` run on the full-width bank's real Stage 0 `stats.json` writes a
+cost file `verdicts3.py` reads.
+
+**6. Stage 0 launcher.** `~/chess-artifacts/operations/rl-deep-fast/stage0/run_stage0.sh` [`30b545b7`] is the full-width v10 launcher with the actor
+`kC_baked.pt` (sha256 `c48a7b2c1cc734a75b9673e2bfbe20233bc5cfb9fe7c622a1290259a5b2b6cc5`, refused otherwise, exit 92), the
+arm table (C: 64 sims, topk 16, `--full-prob 1.0`; D: `--full-prob 0.25 --fast-sims 16 --sims 80 --topk 40
+--root-full-width`), the pin above, and the D-leg gates read from each collect's shards and `stats.json` before the
+shard stores are dropped. `~/chess-artifacts/operations/rl-deep-fast/stage0/run_stage0_all.sh` [`8d076663`] runs r01_C, r02_D, r03_D, r04_C (resume and clear
+rules as the full-width bank), then `~/chess-artifacts/operations/rl-deep-fast/stage0/stage0_report.py` [`97defcd3`]. The guard `~/chess-artifacts/operations/rl-deep-fast/gpu_guard.sh` [`e2c4a5aa`] is the
+data-volume guard with the stage name `stage0` and the full-width scan v7 (`~/chess-artifacts/operations/rl-deep-fast/gpu_scan.sh` [`d1aee351`], zombie skip).
+- **`check_vram` at topk 40, settled on CPU:** the check is per process. Stage 0 runs three `--collect-procs 1`
+  collects, and each refuses on its own need: `vram_settings_detail` at the pin gives 3.22 GiB per process. The
+  9.65 GiB total for 3 processes is never evaluated by a collect, and three concurrent starts each read free memory
+  before the others allocate. The figures are marked extrapolated (80 sims, a 10,240-row leaf buffer, topk 40), against ≈ 26.4 GiB usable
+  (`~/chess-artifacts/operations/rl-deep-fast/prelaunch/check_vram_cpu.json` [`d45da28a`]). The topk-32 fallback is not needed; Stage 0's peak MiB is the
+  measurement.
+- **Gate proof:** `~/chess-artifacts/operations/rl-deep-fast/test/row_gates_fixtures.py` writes 300 real stored rows with the repo's zarr writer: a correct
+  D and a correct C collect pass; zero mean prelude, leaked fast rows (budget 16), a root-stat row without the
+  prelude field, a share of 0.30, and C rows gated as D are each refused; a share of 0.23 passes. **8 of 8 pass.**
+- **Guard tests** (`~/chess-artifacts/operations/rl-deep-fast/test/guard_tests.sh`, CUDA_VISIBLE_DEVICES empty, fake HOME; none reaches nvidia-smi): stage
+  unset or wrong, no release file, a guard refusal leaves no run dir, a tampered bank file (SHA256SUMS, 93), a bad
+  `DF_REGUARD_WAIT_S`, and `clear_step.sh`'s five cases (bad tag, nothing to clear, a finished leg refused, an
+  unfinished leg moved aside, refused while the bank lock is held). **13 of 13 pass.**
+- **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/test/harness_correct_run.sh`: fake HOME, fake nvidia-smi, `fake_collect.py`
+  in place of the network; the real scan, launchers, gates, `steady_rate` and report) runs once the GPU is free of
+  the data-volume control; its result is reported on the PR.
+
+### Stage 1 readout (2026-11-26): W80 PROCEED
+
+**Disclosure:** this read ran after a non-author GO on this addendum (PR #1535 at `5463f6f7e`, bank
+`~/chess-artifacts/operations/rl-deep-fast/SHA256SUMS` [`7945de9c`]) but before the addendum merged. It ran on CPU only (numpy; torch imports blocked; nice 15, ≤ 4
+threads) with the reviewed scorer `~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_score.py` [`708bf777`]
+on `~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_bank_W80.npz` [`96ebcf0e`], unchanged.
+Outputs: `~/chess-artifacts/operations/rl-deep-fast/stage1/scores/scores.json` [`6122f85a`], `.../per_row.npz`
+[`c7ba0366`], the mechanical verdict `.../verdict.json` [`1bb4d461`] from
+`~/chess-artifacts/operations/rl-deep-fast/stage1/stage1_decide.py` [`f0b300f2`], and the report-only intervals
+`~/chess-artifacts/operations/rl-deep-fast/stage1/scores/fragility.out` [`13b9348f`].
+
+| Step | W80 − R64n, paired over 2,433 rows (190 games) | Rule | Result |
+|---|---|---|---|
+| 1. Coverage | mass on moves deep SF did not score: +0.0036 [+0.0019, +0.0055] | ≤ +0.01 | passes |
+| 2. Kill | `exp_cp_lb`: +0.315 cp [−1.502, +2.246] | STOP iff LB95 > 0 and est > +1.2 | not fired |
+| Verdict | | | **PROCEED** to Stage 2 |
+
+- **Report-only tail:** 28 rows with |d| > 100 cp carry +780.9 of the +765.5 cp-row total; the median per-row
+  difference is −0.0009 cp. Leaving out the single largest game gives −0.138 [−1.853, +1.673]; dropping the two
+  largest gives −0.578 [−2.114, +0.881]. The estimate is 0.885 cp below the threshold.
+- **Report-only secondaries (paired):** the Ceres secondaries use 2,422 rows (11 rows have no Ceres value), not
+  the table's 2,433. Ceres expected loss −0.0013 [−0.0028, +0.0001]; Ceres top-1 +0.0058
+  [−0.0052, +0.0166]; p(best) −0.0036 [−0.0084, +0.0014]; top-1 best +0.0016 [−0.0082, +0.0113].
+- It licenses only this: the registered kill did not fire (estimate +0.315 cp, below +1.2; LB95 −1.50 ≤ 0); the
+  interval [−1.50, +2.25] spans zero and does not exclude a deficit larger than seed noise; tail-driven; not evidence
+  W80's target is as good or better; says nothing about allocation or strength.
