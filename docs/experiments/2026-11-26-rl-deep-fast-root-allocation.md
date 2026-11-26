@@ -320,6 +320,8 @@ PYTHONPATH=. $PY $DF/prelaunch/verdicts3.py final $DF
 10. **A D top-up draws its own openings.** If the dose rule needs a top-up collect, its run dir starts a fresh
     opening cursor, so some of its openings can repeat the main collect's. The count of top-up starts present in the
     main collect's `starts.txt` is reported beside Readout A.
+11. **C and D draw different opening permutations.** Their base seeds differ (2026112701 and 2026112702), so the two
+    arms train on different openings from the same book (added in the Stage 2 phase B addendum).
 
 ## GPU-hours
 
@@ -536,3 +538,89 @@ top-up, cost; doses from the report and the realised clocks; seeds and flags rea
 [0.9, 1.1]; scans banked), a relaunch that skips every done step, and the refusals: no GO (90), `CUDA_VISIBLE_DEVICES`
 empty (94), Stage 0 unfinished (91), a tampered stage-2 file (93), an interrupted step (87), and the clear (finished
 step refused, unfinished moved aside, rerun). Its result is posted on the PR.
+
+## Stage 2 phase B addendum: pool, train, fits, bake, matches, verdicts (2026-11-26)
+
+Phase B reads only what phase A banked (its run dirs and sealed manifests, `stage2/cost.json`,
+`stage2/cost_scan.json`, the dose files) and runs arms C and D from `kC_baked.pt` to the registered readings. Bank:
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/`, listed in
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/SHA256SUMS` [`60b9e7ba`], whose sha256 the launcher
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` [`72647431`] pins. Pin `b0541c15a` for
+every step (collect, pool, train, fits, bake, play). Launch needs phase A finished (every phase-A step exited 0,
+`cost.json` and `cost_scan.json` present), `stage2/PHASE_B_GO`, and a `stage2b` release line.
+
+**It is the data-volume control's launcher, ported.** `launch_volume.sh` (control bank) with its step machinery,
+resume rule, markers, host-RAM floors and watchdog, per-seat match resume and damage-only screen kept; the changes:
+
+| Item | Control | Phase B |
+|---|---|---|
+| Pin | `0c795fb7a` (pilot) | `b0541c15a` for everything; matches through `run_df_match.sh` (the follow-up launcher with only the commit changed) |
+| Arms | one cell (c2x) | C and D, each from `kC_baked.pt` |
+| Pool | `pool_collect.py`, admission record | `pool_df.py`: sources = phase A's run dirs, admitted iff their step exited 0; D = `run_D` + `run_Dtopup` iff its dose > 0 (**both D run dirs reach the pool, or the tool refuses**); openings repeated across sources are kept and counted in the pool manifest (Confound 10), a repeated game id still refuses |
+| Flags | `volume_flags.sh` | `TRAIN` and `ZQ` byte-identical; each arm's collect flags = its phase-A flags with the pool's seed (2026112703, also the training seed) and games, so the trainer's own precheck accepts the pool |
+| Snapshots | 1478, 2956 | (U + 1) // 2 and U, U = the PIN's `planned_phase_updates` on that arm's pool (R2 compares the final with the half-way net, as the control's 1478-of-2956) |
+| Take-effect | `opt_check.py` vs generation 2's arm, gen1's saved lr | `opt_check.py` unchanged, each arm's train dir the other's non-LR reference (both arms must realise the same optimizer), `kC_baked.pt`'s saved group lr (6.0e-05, 3e-06; read with `torch.load`) |
+| Fits | generation 2's collect, reference gen1 | **both arms on C's pool collect** (one common calibration set; hold-out 0.05), reference `kC_baked.pt`; `fit_value_recal.py` is the same file at both pins (sha256 `37e27420…`) |
+| Bounds, bake | `recal_bounds.py`, `bake_recal.py` | unchanged, per arm |
+| Matches | one match | C vs `kC_baked.pt` and D vs `kC_baked.pt`, 12,800 games each (6,400 per seat), seed 2026112711, a 4-game smoke per seat; the damage-only screen (200 pairs = 800 games) inside seat B **for each arm**, per match: a screen-stopped match is complete as "damage (screen)" (`stage2/arenas/<L>/STOP_SCREEN`) and the next match still plays |
+| Verdicts | `verdicts.py` | `verdicts3_v2.py final stage2/` |
+| Host-RAM floor | 58 GiB | 86 GiB before the smoke and `train_C` (the volume bank's floor for its 2.77M-row pool; C is that size); 58 GiB before `train_D` |
+
+Steps: `pool_C pool_D smoke train_C train_D optcheck fits bounds bake_C bake_D m_C m_D`, then the verdicts. A failed or
+interrupted non-match, non-train step moves aside with `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/move_aside_b.sh` (the control's mover, ported; it renames, never deletes).
+
+**`verdicts3_v2.py`** (listed in phase B's `SHA256SUMS`):
+`~/chess-artifacts/operations/rl-deep-fast/prelaunch/verdicts3.py` [`2ca64d73`] with only (1) the bootstrap
+check made unable to abort before `verdicts.json` is written (a tolerance on the d(o) reproduction; a mismatch, a
+missing or broken log, or any error inside the check is recorded, never raised), (2) the cost check also reading
+`cost_scan.json` (Readout A "unread: cost unmeasured (a co-resident GPU job)" unless every collect is clean, as
+phase A registered), (3) its bank argument being the Stage 2 directory. D+O is not played by this launcher; Readout B
+reads unread with its reason until D+O's own addendum.
+
+**Deviation, stated:** the training pin is `b0541c15a`, not kC's `0c795fb7a` (phase A addendum). The fits use C's pool
+for both arms, a choice the record did not make; it keeps the calibration data identical between the arms.
+
+**Proofs (CPU).**
+- `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/pool_df_fixtures.py` [`e7a41e00`]: a C pool; a D pool from both run dirs with 3
+  repeated openings kept and counted; a D pool from `run_D` alone when the top-up's dose is 0; refusals for a top-up
+  step that did not exit 0, a missing top-up run dir, a game id in both sources, an opening repeated within a source,
+  a settings difference, another actor, and a tampered shard. **11 of 11 pass.** `stage_checks_df.py`'s pool gate
+  passes on each of the three pools written.
+- `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/verdicts3_v2_fixtures.py` [`d75c6520`]: v1's 23 readings plus a co-resident GPU job, a missing
+  `cost_scan.json`, and a broken seat log that neither aborts nor changes Readout A and is recorded in the check.
+  **27 of 27 pass.**
+- **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/harness_phase_b.sh` [`d76ea3ef`], run when the GPU is free): a
+  fake HOME with a finished fake phase A (sealed run dirs at the pin, the real `kC_baked.pt`), a fake `nvidia-smi`,
+  and `test/fake_phase_b.py` in place of the GPU and heavy steps only; the pool tool, the completion checks, the
+  seat checker, `opt_check.py`, `recal_bounds.py`, the guard and `verdicts3_v2.py` are real. It proves a correct run
+  through all twelve steps to `verdicts.json`, a relaunch that skips every step, a run whose D screen reads damage
+  (D "damage (screen)", C still read, Readout A unread), and the refusals: no GO (90), `CUDA_VISIBLE_DEVICES` empty
+  (94), phase A unfinished (91), a tampered phase B file (93), an interrupted step (87), and the mover's refusals. Its
+  result is posted on the PR.
+
+**Registered decisions** (the coordinator accepted each; one line of reasoning apiece):
+- **Snapshots at (U + 1) // 2 and U:** R2 then compares the final net with the half-way net, which is the control's
+  1478-of-2956 rule, sized from each arm's own plan rather than from a constant.
+- **Both arms' fits on C's pool collect:** the recalibration is then fitted on identical data for C and D, so a
+  difference between the arms' baked nets is not a difference in their calibration sets.
+- **`opt_check.py` cross-reference (each arm's train dir the other's non-LR reference):** the comparison needs the two
+  arms to realise the same optimizer, and no earlier train dir shares this pin and this init file.
+- **A damage screen per arm, per match:** the data-volume record screens every match vs the parent; a damage stop on
+  one arm must not stop the other arm's match, so the stop file is per match.
+- **Host-RAM floors (86 GiB before the smoke and `train_C`, 58 GiB before `train_D`):** the measured basis is kC's own
+  training on its 2.77M-row pool, 60.46 GiB peak RSS (72.14 GiB of loaded arrays), and C's pool is that size; D's
+  pool (~1.2M rows) is under the control's 1.59M-row pool, whose floor was 58 GiB. A refusal at the floor (exit 89,
+  checked before the step's `.started`, so no step is marked failed) is a **wait-and-retry**: quiet the host, move
+  `HOLD_HOST_RAM` aside, relaunch.
+
+**Confound added (from #1539's review):** Confound 11 in the list above. C and D draw different opening permutations
+(base seeds 2026112701 and 2026112702), so the arms train on different openings from the same book. This adds sampling
+variance to Readout A; it is not a systematic advantage to either arm.
+
+**Notes from #1539's review (non-blocking), recorded:**
+- `stage0/stage0_report.py`'s projection still prints the superseded "D aimed at 0.95 x C's hours" wording and a
+  `D_games_at_0_95_C_hours` field. That block is report-only (`decides: false`), and the bank file stays unchanged
+  because Stage 0 runs with it pinned. Phase A sizes D with `dose.py` at 0.85 × H_C plus the registered top-up.
+- **Stopping either phase:** after any stop, check `ps` for leftover Stockfish process groups from the collect or match
+  (the TERM goes to the step's process group; a grandchild that called `setsid` itself would leave it; this is the
+  control's known gap) and stop only those whose command line names this bank's paths.
