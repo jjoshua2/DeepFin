@@ -527,3 +527,68 @@ def test_fast_ply_value_rows_get_neutral_priority() -> None:
     assert len(samples) == 2
     assert samples[0].priority == 7.5   # policy row keeps its difficulty score
     assert samples[1].priority == 1.0   # value-only row is neutral
+
+
+def _pov_record(*, pov_color: chess.Color, ply_index: int) -> _NetRecord:
+    policy = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    policy[0] = 1.0
+    return _NetRecord(
+        x=np.zeros((146, 8, 8), dtype=np.float32),
+        policy_probs=policy,
+        net_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        search_wdl_est=np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        pov_color=pov_color,
+        ply_index=ply_index,
+        has_policy=True,
+        priority=1.0,
+        sample_weight=1.0,
+        keep_prob=1.0,
+    )
+
+
+@pytest.mark.parametrize(("result", "white_row", "black_row"), [
+    ("1-0", 0, 2), ("0-1", 2, 0), ("1/2-1/2", 1, 1),
+])
+def test_main_row_wdl_target_is_in_each_records_own_pov(result: str, white_row: int, black_row: int) -> None:
+    """``wdl_target`` is 0=win / 1=draw / 2=loss for the side to move in THAT
+    row. Before this test the ordinary (non-tablebase) main-row builder had one
+    test that could tell a white-POV label from a per-record one, and it went
+    through the strict-tablebase path (test audit, 2026-11-26)."""
+    records = [
+        _pov_record(pov_color=chess.WHITE, ply_index=0),
+        _pov_record(pov_color=chess.BLACK, ply_index=1),
+        _pov_record(pov_color=chess.WHITE, ply_index=2),
+        _pov_record(pov_color=chess.BLACK, ply_index=3),
+    ]
+    state = cast(Any, SimpleNamespace(
+        selfplay_arr=[True],
+        starting_boards=[chess.Board()],
+        opening_source_arr=["unit"],
+        move_idx_history=[[]],
+        rng=np.random.default_rng(1),
+        game=SimpleNamespace(
+            categorical_bins=32,
+            hlgauss_sigma=0.04,
+            max_plies=240,
+            policy_encoding="az_4672",
+            soft_policy_temp=1.0,
+            input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=False,
+            record_prior_top1=True,
+        ),
+    ))
+
+    samples = _build_replay_samples(
+        state,
+        0,
+        records,
+        result=result,
+        tb_policy_overrides={},
+        vol_targets=[None] * 4,
+        sf_vol_targets=[None] * 4,
+        total_plies_played=4,
+        ply_to_index={0: 0, 1: 1, 2: 2, 3: 3},
+    )
+
+    assert [s.ply_index for s in samples] == [0, 1, 2, 3]
+    assert [int(s.wdl_target) for s in samples] == [white_row, black_row, white_row, black_row]

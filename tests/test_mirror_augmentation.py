@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from chess_anti_engine.moves.encode import (
     COMPACT_MIRROR_POLICY_MAP,
@@ -761,3 +762,67 @@ def test_every_registered_policy_index_field_is_remapped_by_both_paths():
         batch["policy_target"][0, idx] = 1.0
         out = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
         assert int(out[name][0]) == expected, f"maybe_mirror_batch_arrays: {name}"
+
+
+# --- every policy-space field is PERMUTED, not merely left involutive ---------
+#
+# The involution tests above (`mirror(mirror(x)) == x`) pass for a field the
+# mirror never touches: an unmirrored field is its own double mirror. Measured
+# 2026-11-26 (test audit): skipping `policy_soft_target` in either path failed
+# no test in the 82 files that mention the mirror. These two tests state the
+# permutation itself, once per registered field, on rows where it must move.
+
+def _distinct_policy_rows(rng: np.random.Generator, n: int, width: int) -> np.ndarray:
+    """Rows no left-right mirror leaves fixed (strictly increasing + noise)."""
+    return (np.arange(width, dtype=np.float32)[None, :] + rng.random((n, width)).astype(np.float32))
+
+
+@pytest.mark.parametrize(("width", "mirror_map"), [
+    (POLICY_SIZE, MIRROR_POLICY_MAP), (COMPACT_POLICY_SIZE, COMPACT_MIRROR_POLICY_MAP),
+])
+def test_mirror_batch_permutes_every_registered_policy_space_field(width: int, mirror_map: np.ndarray) -> None:
+    from chess_anti_engine.replay.augment import _MIRROR_POLICY_FIELDS
+    from chess_anti_engine.replay.shard import LEGAL_MASK_FIELDS
+
+    rng = np.random.default_rng(7)
+    columns = np.asarray(mirror_map)
+    batch: dict[str, np.ndarray] = {"x": rng.normal(size=(3, 18, 8, 8)).astype(np.float32)}
+    for key in _MIRROR_POLICY_FIELDS:
+        rows = _distinct_policy_rows(rng, 3, width)
+        batch[key] = (rng.random(rows.shape) > 0.5).astype(np.uint8) if key in LEGAL_MASK_FIELDS else rows
+    assert {"policy_target", "policy_soft_target", "future_policy_target", "legal_mask"} <= set(batch)
+
+    out = maybe_mirror_batch_arrays(batch, rng=np.random.default_rng(1), prob=1.0)
+
+    for key in _MIRROR_POLICY_FIELDS:
+        expected = batch[key][:, columns]
+        assert not np.array_equal(expected, batch[key]), f"{key}: fixture row is mirror-symmetric"
+        np.testing.assert_array_equal(out[key], expected, err_msg=f"{key} was not mirrored")
+
+
+def test_mirror_sample_permutes_every_registered_policy_space_field() -> None:
+    from chess_anti_engine.replay.augment import _MIRROR_POLICY_FIELDS
+    from chess_anti_engine.replay.shard import LEGAL_MASK_FIELDS
+
+    rng = np.random.default_rng(8)
+    columns = np.asarray(COMPACT_MIRROR_POLICY_MAP)
+    sample = ReplaySample(
+        x=np.zeros((18, 8, 8), dtype=np.float32),
+        policy_target=_distinct_policy_rows(rng, 1, COMPACT_POLICY_SIZE)[0],
+        wdl_target=1,
+    )
+    for key in _MIRROR_POLICY_FIELDS:
+        row = _distinct_policy_rows(rng, 1, COMPACT_POLICY_SIZE)[0]
+        value = (rng.random(row.shape) > 0.5).astype(np.uint8) if key in LEGAL_MASK_FIELDS else row
+        assert hasattr(sample, key), f"ReplaySample has no field {key}"
+        setattr(sample, key, value)
+
+    mirrored = mirror_sample(sample)
+
+    for key in _MIRROR_POLICY_FIELDS:
+        before = np.asarray(getattr(sample, key))
+        expected = before[columns]
+        assert not np.array_equal(expected, before), f"{key}: fixture row is mirror-symmetric"
+        after = getattr(mirrored, key)
+        assert after is not None, f"{key} was dropped by mirror_sample"
+        np.testing.assert_array_equal(np.asarray(after), expected, err_msg=f"{key} was not mirrored")
