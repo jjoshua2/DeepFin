@@ -1,5 +1,7 @@
 # Experiment records
 
+- [2026-11-26: Banked collections — qualification and admission (proposal)](2026-11-26-banked-collections-admission.md) — CPU, read-only census of seven banked collections (pilot, gen2, successor pilot and continuation, UHO, and the two HOLD banks). Every bank's games / starts / shard-tree sha256 recompute equal, and the stock reader loads all 207 shards. Recipe: no setting differs from gen2's. Openings: no repeats within any bank, 0 shared among the non-UHO banks except gen2 ∩ pilot (430), 0 shared with the EVAL openings. HOLD banks: custody failures at closeout; data verified on E1–E5. Admitted: gen2 + both successor banks (1.18M rows), plus both HOLD banks if the reviewer accepts E1–E5. UHO is held out as a second variable.
+
 - [2026-09-19: Workspace storage migration and queued-job adoption](2026-09-19-workspace-storage.md)
 
 Bend engine records and their evidence live on the `bend` branch (see
