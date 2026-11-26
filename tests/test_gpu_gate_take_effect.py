@@ -150,3 +150,38 @@ def test_bench_pipeline_reaches_no_cuda_init_before_its_gate(tmp_path):
     assert "cuda-stub: is_available reached" in r.stderr, r.stderr[-3000:]
     # (Outside the test seam, CUDA_VISIBLE_DEVICES= makes the gate pass cpu-only without probing.)
     assert r.stderr.index("gpu_gate: bench_pipeline: OK") < r.stderr.index("cuda-stub: is_available reached")
+
+
+def test_rl_driver_marker_reaches_the_arena_child_through_run_arena(tmp_path, monkeypatch):
+    """#1518 review finding A: ``simple_rl_loop run`` gates once and exports ``CAE_GPU_GATE_PASSED``;
+    ``evaluate.run_arena`` must hand it to the arena child (``_child_env``), or the arena refuses the GPU
+    memory the driver itself holds. The driver's own pass is reproduced in this process (``check`` + export,
+    as ``require_gpu_idle`` does), then the REAL ``run_arena`` starts ``arena_standard.py`` on a fake busy GPU.
+    The test seam makes the child exit 97 right after its gate passes, so no arena runs."""
+    from chess_anti_engine.simple_rl import evaluate
+    from chess_anti_engine.utils import gpu_gate
+
+    env = _env(tmp_path)
+    for k in [k for k in os.environ if k.startswith("CAE_")]:
+        monkeypatch.delenv(k)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    cmd = [sys.executable, "-u", str(REPO / "scripts" / "arena_standard.py"), "--device", "cuda",
+           "--candidate", "x.pt", "--reference", "y.pt"]
+    out, log = tmp_path / "arena.jsonl", tmp_path / "arena.log"
+
+    # Control: without the driver's marker the child refuses the busy GPU (so a pass below is inheritance).
+    with pytest.raises(RuntimeError, match="arena exited 8"):
+        evaluate.run_arena(cmd, out=out, log=log)
+    assert "REFUSED: GPU memory.used 30000 MiB" in log.read_text()
+
+    # The driver's gate passes (by override here: the fake GPU is busy) and exports its marker.
+    decision = gpu_gate.check("simple_rl_loop", allow_reason="take-effect test parent", device="cuda")
+    assert decision.passed, decision
+    assert decision.marker == f"{os.getpid()}:simple_rl_loop:allowed", decision
+    monkeypatch.setenv(gpu_gate.ENV_PASSED, decision.marker)
+    with pytest.raises(RuntimeError, match="arena exited 97"):
+        evaluate.run_arena(cmd, out=out, log=log)
+    text = log.read_text()
+    assert "gpu_gate: arena_standard: OK inherited" in text, text[-3000:]
+    assert "overridden: inherited from the parent gate" in text, text[-3000:]
