@@ -3,7 +3,10 @@
 **Status: READ, 2026-11-26.** The verdict section below is judged by the rule registered in this record. The
 pre-registration text after it is unchanged, except that its status line is now in the past tense. **Registered verdict: kC vs the parent "improves", +5.08 Elo
 [+0.48, +9.67]. The slope contrast passes, and kC vs the SL base "improves", +8.52 [+4.00, +13.05]. The "improves"
-reading vs the parent is fragile (below).** Rows and updates are still confounded.
+reading vs the parent is fragile (below).** **Control verdict (read 2026-11-26): the control (gen2's rows presented
+twice, 2,956 updates) vs the parent reads "damage", −5.86 [−10.21, −1.52], and the contrast kC − control passes
+(D − 1.645·SE = +0.0081 > 0), so distinct rows beat repeated rows at this dose.** The update counts are not matched
+(5,151 vs 2,956); see "Control verdict".
 
 ## Verdict (read 2026-11-26)
 
@@ -158,7 +161,8 @@ Sources:
   - "The larger dose beat 1×" is about the dose as a whole: more distinct rows and proportionally more updates at a
     flat LR.
   - **Attribution to distinct rows is unread** until the conditional control runs (1× rows presented twice, 2,956
-    updates, its own direct contrast). It is being prepared and is not launched.
+    updates, its own direct contrast). It is being prepared and is not launched. *(Since read: the contrast passes;
+    see "Control verdict".)*
   - Even then the update counts differ (2,956 vs 5,151), as the record states.
 - **kC vs the SL base "improves"**, +8.52 [+4.00, +13.05]. This is the first registered RL match with LB95 > 0 against
   the SL base since match 8 (+9.6 [+3.3, +16.0]).
@@ -192,7 +196,8 @@ This mirrors the check on #1529. All values are from the recompute.
 - But the reading does not survive removing five favourable openings, or the Sicilian family, and neither seat
   clears 0 alone.
 - Treat it as **"kC is at least not worse than its parent, probably slightly better"**, pending replication or the
-  control.
+  control. *(The control has since read "damage", and its contrast passes without needing kC's positive estimate; see
+  "Control verdict".)*
 
 **The contrast is sturdier but leans on k1.**
 - It survives removing kC's top 48 openings (49 makes it fail), and the bootstrap's P(D ≤ 0) is 0.0007.
@@ -206,6 +211,176 @@ This mirrors the check on #1529. All values are from the recompute.
 - Parent `gen1_baked.pt` `8dd6ac8c…`; fresh k1 `gen2_baked.pt` `5881d2af…`; SL base `a39f900c…`.
 - kC: final `model.pt` `6d679b16…`; `kC_baked.pt` `c48a7b2c1cc734a75b9673e2bfbe20233bc5cfb9fe7c622a1290259a5b2b6cc5`.
 - Collector and arena pin `0c795fb7a`. The arena rows' `git_sha` is `0c795fb7ab5a…`.
+
+## Control verdict (read 2026-11-26)
+
+**Registered verdict: the control vs the parent reads "damage", −5.86 Elo [−10.21, −1.52]. The attribution contrast
+kC − control passes: D +0.0157422, SE 0.0046433, D − 1.645·SE = +0.0081039 > 0.** By the rule registered in the
+"Conditional control addendum" below, this licenses one claim: **distinct rows beat repeated rows at this dose.** The
+dose is kC's 2,636,964 distinct rows, each used once in 5,151 updates, against gen2's 756,711 rows, each used twice in
+2,956 updates, from the same parent. The update counts are not matched (below). This is not a general law about
+repetition.
+
+**The run.**
+- The coordinator launched it at 10:54:38 EST (pid 2991792) with the runbook's one command. The launcher's sha256 is
+  `f0a2e7b4…`, the staged one.
+- It exited 0 at 14:08:31 EST: `~/chess-artifacts/operations/rl-run1-volume-control/exit` [`870e8826`]. There was one
+  launch, with no relaunch and no step resumed: `.../exit.history` [`870e8826`], `.../resume.log` [`0cfc60a8`].
+- No `HOLD_*`, `STOP` or watchdog file exists in the bank. Its `SHA256SUMS` still verifies (`sha256sum -c`) and
+  recomputes to `cc9103482ab5…`, the staged value.
+- Stage times, EST: pool 10:54–11:03, smoke 11:03–11:07, train 11:07–11:25, fits 11:25–11:30, bounds and bake
+  11:30–11:33, `ctl_vs_g1` 11:33–14:08.
+
+**Every reading below was recomputed from the banked per-game logs, not copied from `summary.txt`.**
+- The script reuses the parser and estimator of the primary's recompute, loaded by path. It rebuilds d(o) per opening
+  key for the control and for the banked kC and k1 matches.
+- It reproduces every value in the control's `verdicts.json`, including the bootstrap, exactly.
+- Command, run with the repo venv's python (it needs numpy):
+  `python -I ctl_recompute.py ~/chess-artifacts/operations/rl-run1-volume ~/chess-artifacts/operations/rl-run1-volume-control`.
+- Script `~/chess-artifacts/operations/rl-claude-20261119/control-verdict-recompute/ctl_recompute.py` [`f3208624`];
+  output `.../ctl_recompute.json` [`5e266297`].
+- The bank's decision record: `~/chess-artifacts/operations/rl-run1-volume-control/verdicts.json` [`19078139`] and
+  `.../summary.txt` [`9cdb84db`].
+
+### Control gates (all passed; none is a reading)
+
+- **Pool, exactly twice.** All 7 checks of `double_check.py plan` are true. The plan has 2,956 batches, equal to the
+  pin's planned updates, over 1,513,422 trainable row ids. Every one of the 756,711 trainable positions is in it
+  exactly twice. The 39,630 held-out positions are in it never, and no game id is on both sides. Seed 2026112602.
+  Source: `~/chess-artifacts/operations/rl-run1-volume-control/pool_twice.json` [`99e02d86`].
+- **GPU smoke:** PASS. Peak reserved 16.96 GiB, flat from update 2 to 3, with 1,513,422 rows loaded:
+  `.../smoke_mem.json` [`94bd73a9`].
+- **Training.** **Realised updates 2,956 = planned 2,956**, with no snapshot resume. 1,513,422 rows were drawn in
+  793 s (3.73 updates/s).
+  - The optimizer take-effect check is true: groups 1–3 at 3e-6, group 0 at 6.0e-5 from the init checkpoint's base,
+    the same rule as the primary.
+  - **The trainer's own ledger** (`presented.npz`, the consumer's record) shows every trainable position presented
+    exactly twice (histogram {2: 756,711}) and the held-out positions never.
+  - Sources: `.../train.check.json` [`16539033`], `.../train.opt.json` [`f51e707a`], `.../train_twice.json`
+    [`0e1cdcb6`].
+- **Recal: R1 and R2 both pass, so no `HOLD_RECAL`** (`.../recal_bounds.json` [`b9f35e06`]).
+  - The fits use gen2's sealed collection, with a hold-out of 0.05 by game: 39,630 rows from 401 games. The reference
+    is `gen1_baked.pt` `8dd6ac8c…`.
+  - **R1**, generation 2's box (T ∈ [0.4951, 1.4212], b ∈ [−0.4542, +0.2271]): every fit is inside it.
+
+    | Fit | net sha256 | T | b | recal CE identity → fitted |
+    |---|---|---:|---:|---|
+    | 1,478 | `4d4f9193…` (snapshot) | 0.69988 | −0.23918 | 0.5757 → 0.5589 |
+    | 2,956 | `d83bdc9c…` (snapshot) | 0.70374 | −0.24623 | 0.5766 → 0.5604 |
+    | final | `538f8a32…` (`model.pt`) | 0.70374 | −0.24623 | 0.5766 → 0.5604 |
+
+  - **R2**, the 2,956-update net against 1,478: |Δ ln T| = 0.0055 and |Δb| = 0.0071, both ≤ 0.10.
+  - The final net is the 2,956-update net. Its fit equals the 2,956 snapshot's to every digit. The two files' sha256s
+    differ because the final `model.pt` also carries the optimizer state (650 MB, against 246 MB for a snapshot).
+  - Sources: `.../recal_1478.json` [`c8122d4d`], `.../recal_2956.json` [`d2c3a55d`], `.../recal_final.json`
+    [`6da723ce`].
+- **Bake.** `c2x_baked.pt` has sha256 `50c16131d2774b9371156808ea375b6b8238725eb4aca189f1aa15dfa36c09da`, recomputed
+  now. Its source is the final `model.pt`, with T 0.70374 and b −0.24623. Verify passed: policy bit-identical, max
+  logit difference 8.5e-6. Sources: `.../c2x_baked.pt.json` [`8a42dd9c`], `.../c2x_baked.pt.verify.json`
+  [`08f68e36`].
+
+**Within-run checkpoints (descriptive only).** These use the trainer's hold-out: gen2's held-out games, both copies,
+79,260 rows. They are not comparable with kC's table above, which used a different hold-out.
+- From update 1,478 to 2,956, the second pass moved the net further from the parent: probe KL 0.0160 → 0.0206 and
+  top-1 agreement 0.951 → 0.949.
+- Over the same span, hold-out policy CE moved by 0.0004 (0.9035 → 0.9031) and value NLL rose by 0.0008
+  (0.6881 → 0.6888).
+- Sources: `.../arm_c2x/gen_0001/train/snapshots/step_1478/metrics.json` [`72125da9`],
+  `~/chess-artifacts/operations/rl-run1-volume-control/arm_c2x/gen_0001/train/snapshots/step_2956/metrics.json` [`85c37eca`].
+
+None of this is a strength reading.
+
+### The registered readings
+
+The match was `ctl_vs_g1`: `c2x_baked` against `gen1_baked`. It used `arena_standard.py` matched sims, 64 v 64,
+T0.1, no Gumbel noise, the EVAL book and seed 2026112611, with 6,400 games per seat (12,800 games, 3,200 opening
+clusters).
+- **There were 0 dropped pairs**, and no opening repeated within the run.
+- Terminations: 6,118 by rules and 6,682 by Syzygy. None hit `max_plies` (the longest game was 336 plies).
+- **The 3,200 opening keys are the same as in the banked kC and k1 matches** (same book, same seed; checked in the
+  recompute).
+
+| Match | Excess (score) | SE | LB95 / UB95 (score) | Elo [95% CI] | Seat A alone | Seat B alone | Seat offset | W/D/L (arm) | Reading |
+|---|---:|---:|---|---|---|---|---|---|---|
+| **control vs parent** (`c2x_baked` v `gen1_baked`) | −0.0084375 | 0.0031911 | −0.0146920 / −0.0021830 | **−5.86 [−10.21, −1.52]** | −4.07 [−10.25, +2.11] | −7.66 [−13.67, −1.65] | +1.79 [−2.48, +6.06] | 3,622 / 5,340 / 3,838 | **damage** (UB95 < 0); not adoptable (LB95 < −10 Elo) |
+| kC vs parent (banked, not replayed; above) | +0.0073047 | 0.0033731 | +0.0006935 / +0.0139159 | +5.08 [+0.48, +9.67] | | | | | improves |
+
+Sources:
+- Control: `~/chess-artifacts/operations/rl-run1-volume-control/arenas/ctl_vs_g1/pool.json` [`7380681f`]; logs
+  `.../ctl_vs_g1_1_A.games.jsonl` [`782c91c7`] and `.../ctl_vs_g1_1_B.games.jsonl` [`d5047c09`].
+- kC: `verdicts.json` names the banked `pool.json` (sha256 `f60ec7ca7d72…`) with `replayed: false`. The launcher
+  refuses (92) at launch if that file differs.
+
+**Attribution contrast** (registered; one-sided; arms treated as independent):
+- D_PC = d̄_kC − d̄_C = +0.0073047 − (−0.0084375) = **+0.0157422**, with SE = √(0.0033731² + 0.0031911²) = 0.0046433.
+- D − 1.645·SE = **+0.0081039 > 0, strictly, so it passes.** In Elo terms this is roughly +10.9: kC's +5.08 minus the
+  control's −5.86.
+- The arms share openings and opponent, and the registered SE ignores that. Paired over the shared keys, the SE is
+  0.0045498 (correlation 0.040). Independence hides almost nothing here; this is descriptive, not a reading.
+
+**Bootstrap check** (never decides; B = 20,000, seed 2026112613, opening key as the unit, arms independent):
+- kC 95% [+0.00066, +0.01398]; control [−0.01465, −0.00219]; D [+0.00668, +0.02480].
+- D's 5th percentile is +0.00816, and **P(D ≤ 0) = 0.00035**.
+- P(control ≥ 0) = 0.0043. This comes from the same resamples in the recompute, not from `verdicts.json`.
+
+**By the registered rule:** the control reads "damage", and the contrast passes. So **"distinct rows beat repeated
+rows"** is licensed at this dose.
+
+### What is and is not licensed
+
+- **Selection bias: kC's reading was reused after it had been seen.**
+  - The control exists because kC read "improves"; that reading was its trigger. The contrast reuses that same
+    banked reading, as registered, with no replay.
+  - A reading that is reused because it cleared a bar is biased upward (regression to the mean). So D̂ is biased
+    upward by an amount we cannot estimate here. The primary's fragility section shows how marginal kC's pass was.
+  - **The pass does not depend on kC's positive estimate.** With both SEs held fixed, the contrast passes for any kC
+    excess above −0.0007992 (about −0.56 Elo). If kC's banked excess had been exactly 0, D − 1.645·SE would still be
+    +0.0008.
+  - So the pass is carried by the control's own reading, which is fresh: run once, on its registered seed, and read
+    once. Read the claim as "the control is worse than the parent and kC is not", more than as "kC is +5".
+- **The control's "damage" is clear of 0, but not by much.**
+  - Seat A alone includes 0 (−4.07 [−10.25, +2.11]); seat B alone does not.
+  - Removing the control's 17 most negative openings (of 3,200) brings UB95 to ≥ 0.
+  - Holding kC fixed, the contrast fails only after removing the control's 68 most negative openings.
+- **The update counts are not matched: kC 5,151, control 2,956.**
+  - The registered design chose rows presented twice, which doubles the updates on 1× rows. It did not match kC's
+    update count.
+  - So "distinct rows beat repeated rows" compares kC's whole dose (3.47× distinct rows, 5,151 updates) with 1× rows
+    presented twice (2,956 updates). It does not exclude the possibility that kC's extra 2,195 updates contributed.
+- **What k1 against the control does and does not show** (descriptive; not a registered contrast):
+  - k1 is `gen2_baked`: the same parent, gen2's rows once, 1,478 updates, −5.13 [−9.47, −0.79]. The control is the
+    same parent, the same rows twice, 2,956 updates, −5.86 [−10.21, −1.52]. Both matches use the same opening keys.
+  - Their difference, k1 − control, is +0.0010547 on the score scale (about +0.7 Elo). Its SE is 0.0045089 (paired
+    SE 0.0043242), with 95% [−0.0078, +0.0099], roughly [−5.4, +6.9] Elo.
+  - **It does show:** a second pass over the same rows, which doubled the updates from 1,478 to 2,956 at a flat LR,
+    did not measurably change the result against the parent. Both read "damage".
+  - **It does not show:**
+    - that more updates are useless: here the extra updates are on repeated rows, so "more updates" and
+      "repetition" cannot be separated within this pair;
+    - that kC's extra updates on fresh rows are harmless: the 1,478 → 2,956 step on repeated rows does not
+      extrapolate to 2,956 → 5,151 on new rows;
+    - that the two are equivalent: the interval spans about ±6 Elo, so an update effect of that size is not excluded.
+  - k1's reading also disagrees with the banked generation-2 reading of the same pair by about 1.6 SE (above).
+- **Other caveats, as registered:**
+  - The batch plans differ (seed 2026112602 against 2026112601).
+  - The control's rows are a subset of kC's pool, because gen2's rows are in kC's pool.
+  - Each arm has one training seed.
+  - Everything is from one parent, a 64-sim matched-sims arena at T0.1 on the EVAL book. Nothing here measures other
+    doses, sim counts, time controls or external engines.
+- **Deviations, both disclosed in the "Control launch addendum" below.** The control launched at 10:54 EST, before
+  either PR had merged:
+  - #1532 (the control's registration) was reviewed MERGE at `aa44b355c`, but its CI was pending and it was not
+    merged. It merged at 11:12 EST, 18 minutes after the launch.
+  - #1534 (the launch addendum, now carried by #1537) was neither reviewed nor merged.
+
+  The registration (design, seed, gates and decision rule) is unchanged, and the run used exactly the staged files
+  at `SHA256SUMS` `cc9103482ab5…`. Nothing in the verdict depends on the order of the merges.
+
+### Control hashes
+
+- Control: snapshot 1,478 `4d4f9193…`; final `model.pt` `538f8a32…`; `c2x_baked.pt`
+  `50c16131d2774b9371156808ea375b6b8238725eb4aca189f1aa15dfa36c09da`.
+- Parent `gen1_baked.pt` `8dd6ac8c…`; banked kC `pool.json` `f60ec7ca…`; gen2 collection manifest `778b7ecd…`.
 
 ## Pre-registration (unchanged below, except this status line)
 
@@ -901,6 +1076,9 @@ A screen stop ends the run ≈ 3.0 h after launch.
 
 ## Conditional control addendum (registered before any control launch)
 
+*(Registered text below, unchanged. #1532 merged at 11:12 EST on 2026-11-26. The control launched at 10:54 EST, before
+that merge, as disclosed in the launch addendum, and is read in "Control verdict" above.)*
+
 **Status: registration, for non-author review.** Nothing of the control is launched. It launches only after this
 addendum merges, and after its launcher PR is reviewed and merged.
 
@@ -1025,7 +1203,8 @@ primary.
 
 ## Control launch addendum (the staged control bank)
 
-**Status: LAUNCHED 2026-11-26T10:54 EST (15:54 UTC) by the coordinator.**
+**Status: LAUNCHED 2026-11-26T10:54 EST (15:54 UTC) by the coordinator. Finished: exit 0 at 14:08:31 EST, no HOLD;
+read in "Control verdict" above.**
 - **Where:** from `rl-run1-volume-control/`, a copy of the staged bank (`SHA256SUMS` `cc9103482ab5…`). `sha256sum -c`
   was OK and `operator_volume.sh --no-launch` verified it.
 - **Launch:** pid 2991792; launcher sha256 `f0a2e7b42ef8ce410eb3a45515947610ef224b8df163fd2132cc536a0bb44afc`
