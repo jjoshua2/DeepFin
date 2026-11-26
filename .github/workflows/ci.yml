@@ -37,8 +37,8 @@ jobs:
       # ⚑ RECORD-ONLY FAST PATH. A pull request whose every changed path
       # (old and new name of a rename included) is docs/experiments/*.md cannot
       # change what the two suites below execute, yet each push used to wait
-      # ~58 min for them. For those PRs this job runs only the tests that read
-      # the records. Anything else — a push to main, an API error, an empty file
+      # ~58 min for them. For those PRs this job runs only the `records` suite
+      # (scripts/validate.py RECORD_TESTS). Anything else — a push to main, an API error, an empty file
       # list, one path outside that directory — leaves `records_only` unset and
       # the full suites run. The job is never skipped: `test` is a required
       # check and must report a real result.
@@ -68,11 +68,8 @@ jobs:
         if: steps.scope.outputs.records_only == 'true'
         env:
           CAE_TEST_THREADS: auto
-        run: |
-          set -euo pipefail
-          mapfile -t files < <({ echo tests/test_no_absolute_home_paths.py; echo tests/test_verify_evidence_stamps.py; grep -l 'docs/experiments' tests/test_*.py; } | sort -u)
-          echo "running: ${files[*]}"
-          python -m pytest -q "${files[@]}"
+          CAE_EXPECT_SLIDER_BACKEND: magic
+        run: python scripts/validate.py records --require-cpu-wheel
       - name: Capped local regression
         if: steps.scope.outputs.records_only != 'true'
         env:

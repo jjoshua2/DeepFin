@@ -52,6 +52,18 @@ JOIN_RACE_TESTS = (
     "tests/test_thread_join_sites.py",
     "tests/test_uci_degrade_gaps.py::test_join_waits_until_the_os_thread_ran_its_tls_destructors",
 )
+# What a pull request that changes only docs/experiments/*.md can break: the
+# tests that read those records. CI runs this suite instead of capped + cpu for
+# such a PR (.github/workflows/ci.yml, "Classify the change").
+# tests/test_validation_runner.py fails when a test file mentions
+# docs/experiments and is missing here.
+RECORD_TESTS = (
+    "tests/test_core_d2_short_horizon_metadata.py",
+    "tests/test_core_k0_saved_endpoint_recovery.py",
+    "tests/test_no_absolute_home_paths.py",
+    "tests/test_validation_runner.py",
+    "tests/test_verify_evidence_stamps.py",
+)
 THREAD_VARS = (
     "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
     "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
@@ -61,7 +73,8 @@ THREAD_VARS = (
 def suite_command(suite: str) -> list[str]:
     if suite == "lint":
         return ["bash", "scripts/lint.sh"]
-    paths = {"pext": PEXT_TESTS, "capped": CAPPED_TESTS, "join-race": JOIN_RACE_TESTS}.get(suite, ())
+    paths = {"pext": PEXT_TESTS, "capped": CAPPED_TESTS, "join-race": JOIN_RACE_TESTS,
+             "records": RECORD_TESTS}.get(suite, ())
     return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", "--durations=20", *paths]
 
 
@@ -363,7 +376,7 @@ def apply_change_scope(env: dict[str, str], changed_vs: str | None, workdir: Pat
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint", "join-race"))
+    parser.add_argument("suite", choices=("cpu", "pext", "capped", "lint", "join-race", "records"))
     parser.add_argument("--threads", default=os.environ.get("CAE_TEST_THREADS", "2"),
                         help="Positive count or auto; defaults to CAE_TEST_THREADS or 2. capped always uses 2.")
     parser.add_argument("--workers", default=os.environ.get("CAE_TEST_WORKERS"),
