@@ -812,3 +812,149 @@ every pin check, and the copies stay on one side of the hold-out. This was obser
 **Recovery:** everything is written under the new bank. The finished volume bank and the gen2 bank are read only,
 pinned by sha256. Training resumes in place from its newest snapshot, and the match resumes per seat, as in the
 primary.
+
+## Control launch addendum (the staged control bank)
+
+**Status: staged and tested on CPU, for non-author review. Nothing is launched.** The control launches only after
+"Conditional control addendum" above (#1532) and this section are merged, on the coordinator's `OWNER_GO`.
+
+**The bank is the volume bank's launcher, adapted.** The guards, the resumable step structure (inputs record, skip on
+done, refuse on changed inputs, train resumes in place, matches resume per seat) and the match and verdict code are the
+volume bank's.
+- The staged copy is `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/`. The operator copies it to `$C` = `rl-run1-volume-control/` beside the finished
+  bank, which must not exist yet.
+- The finished volume bank and the gen2 bank are read only.
+- The banked kC vs parent `pool.json` (sha256 `f60ec7ca7d72…`) is checked at launch: a different file refuses (92)
+  before any step.
+
+**Steps:** `pool` → `smoke` → `train` → `fits` → `bounds` → `bake` → `m_ctl_vs_g1` → verdicts.
+- `pool`: build `pool_c2x`, read every shard back, run the pin's plan with `--precheck`, `double_check.py plan`
+  (`pool_twice.json`) and the pool gate.
+- `smoke`: the 58 GiB floor, then the 3-update GPU memory smoke on the pool.
+- `train`: the 58 GiB floor, then one phase with `--snapshot-updates 1478,2956`. Gates: the take-effect check;
+  realised updates = the pin's plan (2,956); `double_check.py ledger` on the trainer's `presented.npz`
+  (`train_twice.json`). Any miss is `HOLD_TRAIN_CHECK`.
+- `fits`: at 1478, 2956 and the final, on gen2's sealed collection, hold-out 0.05.
+- `bounds`: R1 at every fit; R2 final (the 2,956-update net) vs 1478. A miss is `HOLD_RECAL`.
+- `bake`: the final net.
+- `m_ctl_vs_g1`: 12,800 games, seed 2026112611, no screen, with a 4-game smoke per seat first.
+
+**The host-RAM floor: 58 GiB, by the record's rule.** The rule is footprint + 12 GiB margin + 2 GiB for the
+trainer.
+- The footprint was measured on the staged `c2x` pool with the volume bank's `rss_load.py` (the pin's `load_window`
+  + `prepare_targets`, the control's flags, CPU): `~/chess-artifacts/operations/rl-run1-volume-control.staging/rss/rss_c2x.json` [`92834e624fc1`], log
+  `~/chess-artifacts/operations/rl-run1-volume-control.staging/rss/rss_c2x.log` [`dc73822aefb8`], wrapper `~/chess-artifacts/operations/rl-run1-volume-control.staging/rss/run_rss.sh` [`71376f1a6d73`].
+- Loaded arrays 41.52 GiB; peak RSS (`ru_maxrss` = `VmHWM`) 43.55 GiB; load 202 s.
+- The record took the larger of the two as the conservative footprint (for kC the arrays were larger). Here the peak
+  RSS is larger, so the footprint is 43.55 GiB. 43.55 + 12 + 2 = 57.55 GiB, rounded up to **58 GiB** (60,817,408 kB).
+- The watchdog (6 GiB) and the snapshot resume are unchanged.
+
+### Staged control files (sha256)
+
+| File | sha256 | Origin (vs the volume bank) |
+|---|---|---|
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/SHA256SUMS` [`cc9103482ab5`] | `cc9103482ab563b897d99310a73cb4afcbea45b50893408aa8de46b3ca546544` | every file of the bank |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/gpu_guard.sh` [`f6ae4287523f`] | `f6ae4287523f7514201d786507624ad19f282e45dbf49b373db5990fdf68fb0a` | the volume bank's guard (`29e85c52335d…`) with only its default bank path changed to the control's |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/gpu_scan.sh` [`47c08152bd9e`] | `47c08152bd9e91dd1844018ab42dec2265a5dfb27e01924e206782e1fa369b84` | the volume bank's v4z scan, unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/launch_volume.sh` [`f0a2e7b42ef8`] | `f0a2e7b42ef8ce410eb3a45515947610ef224b8df163fd2132cc536a0bb44afc` | the volume launcher (`7130c48bc46a…`): cell c2x, `double_check.py` in the pool and train steps, fits on GC, the one match `m_ctl_vs_g1` (no screen), the kC `pool.json` refusal (92), the control verdicts, the 58 GiB floor |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/move_aside.sh` [`fa6170f1e323`] | `fa6170f1e323ee6e3340e4c60b979e67d7a942e1f06b2f91dacd6a457057522b` | the volume bank's: bank default, fits list (1478, 2956, final), `pool_twice.json`, the one match step |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/operator_volume.sh` [`e038513d93f0`] | `e038513d93f0ee5e5cfb272ddb08544ca0ba3dbb6295b889a4b4d434c1bc04a8` | the volume bank's with only its default bank path changed (and its self sha256) |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/SHA256SUMS` [`537183052261`] | `5371830522612e53a7fc3aa88828aec2ffaceb364b0f6b297b588ec29750ffb8` | every file of `prelaunch/` |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/admission_record.md` [`cdb1ab63cdba`] | `cdb1ab63cdba4896c4c9677115484646c75fa5959d0784671c688e91f09f1b3d` | the merged admission record, unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/bake_recal.py` [`786bb537e0d1`] | `786bb537e0d1130ed2ae20bf81c7791239f4903095fd22a2f40840e3e8a06230` | unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/double_check.py` [`1eb6606d784c`] | `1eb6606d784c09f046a2c2ed1346bba16c05ec800384354e248f341a021aa6f0` | new: the exactly-twice / hold-out / plan gate (`plan`) and the post-train ledger gate (`ledger`); `validate` proves the plan rebuild |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/opt_check.py` [`4f8b306f72f8`] | `4f8b306f72f845dc7d5a4d687c41c74811d8f07c96bfd11dde4b2c7d991c55fc` | unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/planned_updates.py` [`208995af153c`] | `208995af153ceacc3db7aa52e25cc914072394dd0fc089a3ba428bdc4fe901c4` | unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/pool_collect.py` [`d2d55334cf59`] | `d2d55334cf597cca83dea80eacdd500637b53805727c10b6e252409cc61b8e65` | the volume tool: cell c2x = (gen2, gen2), P4 relaxed only between copies of one bank, pool seed 2026112602 |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/recal_bounds.py` [`1a50be12ca39`] | `1a50be12ca393e782adb7220f043f598e56ee8a43d830ed4a57e53b6dea362f2` | the volume bank's; only the HOLD message made generic |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/run_smoke.sh` [`1cdacae5ec45`] | `1cdacae5ec450ae7f951c3da4d80a7d084c0c9df3a1a6143b431d9690a3128fe` | the volume bank's; bank default and its two pins |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/screen.py` [`106f90becbe5`] | `106f90becbe5e881a7e1d529875aef0f681bd3caa6bf0a19f65050d47bc24989` | unchanged; not called (no screen) |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/seat_state.py` [`a0f80af1286c`] | `a0f80af1286ca90d38eb6ddc77e84395292f0b8b0f73ad35654d579c842ceef0` | unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/stage_checks.py` [`21a4dc865f0b`] | `21a4dc865f0bce5ef33556845d98947c177f94b322a5aab4751a1ee80211fe21` | the volume bank's; the pool gate pins the staged c2x pool (16,000 games, 1,592,682 rows, 84 shards, its three digests, seed 2026112602, order gen2, gen2) |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/train_mem_smoke.py` [`2ce38774e589`] | `2ce38774e589c124266381b138ef9f7b689c2b9e2aace05e689c38d1a06d5c54` | unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/prelaunch/verdicts.py` [`c43ce4ccdb2c`] | `c43ce4ccdb2c5265eb80cf5d3847f6a6abd9571ad86e624d3d223f95471dfdb3` | new decision part, the volume estimator unchanged: the control's reading and the kC − control contrast from the banked kC `pool.json` (sha-checked, never replayed) |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/test/pool_harness.py` [`d3cc705d2757`] | `d3cc705d275707462bb8340e2e87ff32014317e1b76dfc9b1c1a5f85eefdd39e` | unchanged (the launcher calls only its `real` mode) |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/volume_checks.sh` [`32ea45763cdb`] | `32ea45763cdb70b891a6cfd055cf05472222dfffa973ec831291302b28faa259` | the volume bank's: c2x, snapshots 1478 2956, seed 2026112602, GC, the kC `pool.json` and its sha256, the one match step, the twice results in the pool and train checks |
+| `~/chess-artifacts/operations/rl-run1-volume-control.staging/bank/volume_flags.sh` [`8b7359fb8ef3`] | `8b7359fb8ef3c1221ed2e6fbc69939e09cd75ffd424d103a07b0eac6a0bf8787` | the volume bank's with `--seed 2026112602` and `--games 16000` |
+
+### Proofs (CPU; no GPU; torch-importing runs inside a private mount namespace with `/dev/dxg` covered)
+
+- **Guard harness, one unmutated pass: 194/194.** `~/chess-artifacts/operations/rl-run1-volume-control.staging/test_launcher/guard/guard_test.sh` [`92df1fd7375c`] (with
+  `.../fakepy.py` [`8dc529507f0c`], `.../fake_match.sh` [`5efcae2763d1`]); log `~/chess-artifacts/operations/rl-run1-volume-control.staging/test_launcher/guard/out/unmutated.log`
+  [`7be36cd26d50`].
+  - It runs in a private user + PID + mount namespace, with a fake HOME, a fake `nvidia-smi` and `CUDA_VISIBLE_DEVICES`
+    empty for the harness.
+  - It is the volume harness adapted: the screen and base sections are removed and a control section is added.
+  - It covers every refusal of the volume launcher on the control files, plus one case per refusal the control adds
+    or changes:
+    - the banked kC `pool.json` changed or missing (92);
+    - `double_check.py plan` failing (the pool step fails, nothing later);
+    - `double_check.py ledger` failing (`HOLD_TRAIN_CHECK` naming it, no fit);
+    - a `pool_twice.json` / `train_twice.json` no longer ok after completion (never skips);
+    - the floor at 58 GiB − 1 KiB (refused) and exactly 58 GiB (passes), before the smoke and before the training step;
+    - R2 against 1,478 for the 2,956-update net;
+    - the fits on gen2's collection, never the pool's;
+    - the verdict's kC side being the banked `pool.json` (equal excess, not replayed);
+    - the contrast cases (control loses: passes; control equal to kC: does not pass, attribution unread).
+- **Real-fixture gates: 13/13.** `~/chess-artifacts/operations/rl-run1-volume-control.staging/test_launcher/realfix/gates_real_ctl.sh` [`810d79cc02f6`], log
+  `~/chess-artifacts/operations/rl-run1-volume-control.staging/test_launcher/realfix/gates_real_ctl.log` [`96a8e6877389`]. A correct run passes every gate, and one wrong copy
+  of each fails:
+  - the pool gate on the staged pool;
+  - **the update count**: the pin's plan = 2,956 over 1,513,422 rows, precheck accepted;
+  - **the recal box**: R1 + R2 on generation 2's real fit as 1478, 2956 and final, passing, and HOLD when the final
+    T × 1.106;
+  - the fits check with GC;
+  - `verdicts.py` on the real banked arenas, with k1's arena standing in for the control: kC − "control" reproduces the
+    finished bank's registered contrast and bootstrap exactly.
+- **The RAM floor**: measured above; a host with MemAvailable ≥ 58 GiB passes it.
+- **Read-back of the staged pool** by `pool_harness.py real` (the launcher's own check): 6/6 in 6 min 44 s (C2, C3,
+  C7, C16, C17, C18). Log `~/chess-artifacts/operations/rl-run1-volume-control.staging/test_launcher/realfix/readback_staging.log` [`5b424e07ddfe`].
+- **Mechanism (a), end to end, and the exactly-twice gate on the real pool**: see "Conditional control addendum"
+  above.
+
+### Control operator runbook
+
+1. **Copy and verify** (the control's bank must not exist yet):
+   ```
+   cp -a ~/chess-artifacts/operations/rl-run1-volume-control.staging/bank ~/chess-artifacts/operations/rl-run1-volume-control
+   cd ~/chess-artifacts/operations/rl-run1-volume-control && sha256sum -c --quiet SHA256SUMS && echo BANK_OK
+   ```
+2. **Authorise.** The coordinator, never the operator script, writes one line, `<who> <ISO time> <message>`, to
+   `$C/OWNER_GO`.
+3. **Pre-flight** (verifies only, launches nothing; exit 0 expected):
+   ```
+   ~/chess-artifacts/operations/rl-run1-volume-control/operator_volume.sh --no-launch
+   grep MemAvailable /proc/meminfo     # >= 60817408 kB (58 GiB) before the smoke and the training step
+   ```
+   Stop every other GPU job and every agent harness: a harness's fake processes make the real guard refuse.
+4. **Launch** (the one command):
+   ```
+   ~/chess-artifacts/operations/rl-run1-volume-control/operator_volume.sh
+   ```
+   It behaves as the volume bank's operator script:
+   - it verifies its own sha256, the bank against `SHA256SUMS` and `OWNER_GO`;
+   - it runs the pinned operator gate;
+   - it writes the release line `volume idle_mib=<MiB> <ISO time>` to `$C/GPU_RELEASED_BY_OPERATOR`;
+   - it starts `launch_volume.sh` detached, appending to `$C/run.out`.
+
+   Running it again is safe.
+5. **Watch, stop and resume:** as the volume runbook, under `$C`.
+6. **Holds** are the owner's: `HOLD_HOST_RAM`, `HOLD_MEM`, `HOLD_TRAIN_CHECK` (now also an exactly-twice miss,
+   `train_twice.json`), `HOLD_RECAL`, `HOLD_WATCHDOG` and `HOLD_READBACK_<seat>`. There is no screen.
+7. **The end:**
+   - `$C/exit` reads `0 <time>`;
+   - `$C/summary.txt` gives the control's reading, the banked kC reading and the kC − control contrast;
+   - `$C/verdicts.json` holds the decision record, including the bootstrap check.
+
+   The verdict goes in this record in the same session, by the registered rule.
+
+### Expected durations (measured rates)
+
+| Step | Duration | Basis |
+|---|---:|---|
+| pool | ≈ 12 min | the staged build: 101 s build, 404 s read-back, plus the plan, `double_check.py plan` and the pool gate |
+| smoke | ≈ 5 min | 202 s load (`rss_c2x.json`) + 3 updates |
+| train | ≈ 19 min | 202 s load + 2,956 × 0.3164 s |
+| fits + bounds + bake | ≈ 18 min | the record's ≈ 0.4 GPU-h for four fits, scaled to three |
+| `m_ctl_vs_g1` | ≈ 2.9 h | 1.45 h per 6,400-game seat |
+| **total** | **≈ 3.8 h** | |
