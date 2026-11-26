@@ -48,7 +48,7 @@ Read in the same session as the readout. Stage 0 exited 0 at 2026-11-26 00:53:12
 `RFW/stage0/summary.jsonl` [`cebc9f1a`] and `RFW/stage0/decision.json` [`293b4eeb`]. Each leg is 3 processes ×
 128 games in flight, 1,152 games, the SL base at `0d4d11572`. All five legs ran under the nested guard, with 0
 buffer flushes. Every realised gate held: leaf buffer = 128 × 2 × topk, chunk rows 512, 0 eager forwards. The
-`env.observed` files are identical across legs and the CUDA prefix is empty.
+`env.observed` files are identical across legs: empty (no observed-prefix variable set) in all five legs.
 
 | Leg | Sims | Knob | topk | Rows | Steady rows/s | Whole-wall rows/s | Mean prelude visits | Forwarded rows / stored row | GPU util | Peak MiB |
 |---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -117,24 +117,37 @@ noise".
   null for `M64on`.
 
 **What the verdict licenses.**
-- It licenses exactly this: as registered, the full-width root round at equal collect cost gives a training target
-  measurably worse than knob-off at 64 sims. That holds against deep SF 8M (primary) and, in direction, against the
-  searched Ceres reference. The record therefore stops.
+- It licenses exactly this: the registered rule fired, and a fired rule licenses stopping, nothing stronger. With
+  the SL base as actor, the full-width root round at equal collect cost gives a training target that is worse than
+  knob-off at 64 sims by the rule's measure: deep SF 8M (primary), and in direction the searched Ceres reference.
+  "Worse" is meant only in that sense. The record therefore stops.
+- **The kill is fragile, and the record says so.** The primary is driven by its tail:
+  - 44 rows with |d| > 100 cp carry 2,586 of the 5,234 cp-row total;
+  - the median per-row difference is +0.002 cp;
+  - the three largest rows are +998, +841 and +826 cp.
+  - Leaving out the single largest game gives +1.736 [−0.128, +3.715], and dropping the two largest gives +1.335
+    [−0.505, +3.141].
+  - The estimate sits 0.95 cp above the 1.2 cp threshold.
+  - Sources: the reviewer's recompute, `RC/results-review-1529/s1_recompute.out` [`1c3d41ff`], and the author's check
+    from the bank's per-row scores, `RC/results-review-1529-author/s1_fragility.out` [`d7ea1379`].
 - It is a **target-quality audit verdict, not a strength test.** No arena (Stage 2) and no training generation
   (Stage 3) was run, so it says nothing about Elo either way.
 - It says nothing about wider search at much higher sims, about a budget-neutral round 0 (the unbuilt option
   below), or about full width with a different value target.
 - At matched sims (`M64on`, 64 sims, 1.54× the cost) the target is not distinguishable from knob-off
-  (+0.65 [−0.89, +2.20]). The loss at equal cost comes from the sims the prelude takes away.
+  (+0.65 [−0.89, +2.20]). The loss at equal cost is consistent with the sims the prelude takes away, but does not
+  isolate it: `MSEQon` differs from `M64on` in sims (33 against 64) **and** in topk (17 against 32), and the `M64on`
+  contrast's CI reaches +2.2.
 
 **What this closes and what it leaves open.**
-- **Closed:** `--root-full-width` as a collection setting at the pilot's 64-sim budget. Its equal-cost target is
-  worse, so no generation was trained.
+- **Closed:** `fw_wide` (full width plus widened candidates) at the pilot's 64-sim budget, with the SL base as
+  actor. Its equal-cost target is worse by the registered rule, so no generation was trained.
 - **Open, each needing its own record:**
   - an ordering-only use of the wider root statistics (the sibling screen's question; coverage and ordering did
     rise here);
   - full width at a budget where the prelude is a small share of the sims;
-  - a budget-neutral round 0.
+  - a budget-neutral round 0;
+  - full width at topk 16 (arm B), never measured: Addendum 2 replaced it before any stage ran.
 
 ### The bank fixes made during the launch (2026-11-25/26)
 
@@ -150,7 +163,7 @@ real bank, `cmp` and `sha256sum -c` after each step), and neither changed a meas
      - v6: refused exactly as on the host.
    - The live host scan under v7 skipped 80 such zombies and returned clean.
    - The generation-2 and sibling banks keep their older scan.
-2. **Crashed, 23:36:56 EST, after about 10 minutes of r01 collect**
+2. **Crashed, 23:36:56 EST, after about 12.5 minutes of r01 collect (process walls 747.8–752.3 s in `stats.json`)**
    (`RFW/stage0/stage0_all.crashed_20261125T2337.log` [`3527d5e5`]).
    - The post-run block read `collect/procs/00/games.jsonl`, but the collect at this pin removes `procs/` when it seals.
    - **`run_stage0.sh` v10** reads the sealed `collect/games.jsonl`, and refuses if its count differs from
