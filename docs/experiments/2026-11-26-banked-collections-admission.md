@@ -10,11 +10,11 @@ Every check is CPU-only and read-only on the banks.
   a self-check that could not fail; the re-run output is byte-identical);
 - the stock-reader check `reader_check.py` [`eefbfbd1`] and its output `reader_check.json` [`506aef15`];
 - the every-row content check, the statistics reviewer's scripts re-run into `bank_check/` (E6):
-  - driver `run.sh` [`5593b9a4`], running `bank_check.py` [`bfc78db3`] per bank, then `ref_keys.py` [`46237d68`],
-    `cross.py` [`19c256cf`] and `control.py` [`642c042e`] (the positive control, its directory argument
+  - driver `bank_check/run.sh` [`5593b9a4`], running `bank_check/bank_check.py` [`bfc78db3`] per bank, then `bank_check/ref_keys.py` [`46237d68`],
+    `bank_check/cross.py` [`19c256cf`] and `bank_check/control.py` [`642c042e`] (the positive control, its directory argument
     re-pointed);
-  - outputs: `gen2.npz.json` [`bacf27d2`], `succ_pilot.npz.json` [`2940cff1`], `succ_cont.npz.json` [`f7d24009`],
-    `fresh_indep.npz.json` [`8d0a6db8`], `b01_r2.npz.json` [`f13340b2`], `cross.out` [`9c61e104`];
+  - outputs: `bank_check/gen2.npz.json` [`bacf27d2`], `bank_check/succ_pilot.npz.json` [`2940cff1`], `bank_check/succ_cont.npz.json` [`f7d24009`],
+    `bank_check/fresh_indep.npz.json` [`8d0a6db8`], `bank_check/b01_r2.npz.json` [`f13340b2`], `bank_check/cross.out` [`9c61e104`];
   - each bank's summary is identical to the reviewer's own run (`RC/review-1523/`).
 
 The owner's rules this record applies:
@@ -204,8 +204,10 @@ disk:
 - **(E5)** the rows are not duplicated elsewhere: game ids and openings are disjoint from every other admitted bank.
   Shown.
 - **(E6)** every row's content is consistent: for every stored row, the board decoded from `x` regenerates a legal
-  move set equal to the stored `legal_mask`; the stored policy has no mass outside it; (game, ply) is unique and
-  contiguous per game with the ledger's row count; and each played move leads to the next row's position.
+  move set equal to the stored `legal_mask`; the stored policy has no mass outside it; (game, ply) is unique,
+  every ply lies within [start_ply, total_plies), and each game's row count equals the ledger's. This is not
+  contiguity: 4,107 of gen2's 8,000 games have ply gaps (the reviewer's count: plies that stored no row), and the check does not test
+  why. Where the next ply's row exists, each played move leads to the next row's position.
 
 | Bank | Rows | `legal_mask` equal | Policy mass outside legal | Continuity checked / breaks | Dup (game, ply) | Games rows ≠ ledger |
 |---|---:|---:|---:|---:|---:|---:|
