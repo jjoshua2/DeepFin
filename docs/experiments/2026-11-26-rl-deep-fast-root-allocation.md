@@ -662,9 +662,15 @@ OOMed at three processes.
 `BatchStats.positions` stays correct. The returned list is empty. `retain_samples=False` without `on_game_complete` is
 refused. The default is unchanged for every other caller, and game generation is unchanged.
 `tests/test_play_batch_retain_samples.py` checks that the returned list is empty, that every row reached the callback,
-and that `positions` equals the rows delivered. It also checks that the rows are byte-identical to the default path,
-in the same order and with the same seed (`x` and `policy_target` per row; the same seed reproduces the same rows and a
-different seed changes them). Mutant: with the clear removed, both row tests fail; restored, all three pass. The
+and that `positions` equals the rows delivered. It checks that the rows are byte-identical to the default path at the
+same seed, in the same order (`x` and `policy_target` per row). (The suite does not test that a different seed changes
+the rows; I checked that once by hand: seeds 11 and 12 gave 30 and 28 different rows.) **The memory bound** is tested
+directly (added after review): the callback keeps only weakrefs to the rows it receives, and at every later game, after
+`gc.collect()`, every row from an earlier game whose slot has been reused is dead. The one row set allowed to survive
+is that of a finished game whose slot is not reused because the target is already dealt; it lives in that slot's own
+records until return, at most one game per slot. Mutants: (a) per-game clear removed, one clear before `return` (the
+reviewer's mutant, which passed the first three tests): the bound test fails, alive rows `[0, 6, 12, 18]`; (b) no
+clear at all: the first two tests and the bound test fail; restored, all four pass. The
 collector's other per-game structures are bounded: `pending` is popped per game in `on_game`, `buffered` is flushed at
 `rows_per_shard`, the journal is compacted at every flush, and the provenance objects are consumed per game and not
 kept.
@@ -708,7 +714,13 @@ A step's first guard therefore refuses at once (exit 8). The between-step re-gua
 halts phase A at its next step boundary: it does not corrupt the run, it stops it. Run such audits in a pause window or
 between phases.
 
-**Launch** (the coordinator, after non-author review and merge):
+**Deviation (coordinator, disclosed):** phase A was relaunched at about 18:50 EST on the reviewed pin `d08b03adb`
+before this PR merged. The fix code and the pin were approved in review; only this PR's test and record text were still
+open. **Take-effect proof for the fix:** in `stage2/phase_a.log`, the `rss collect_C session_total=…` line, logged every
+600 s, stays flat over the collect. Before the fix, each process grew by about 8.9 MB per game, to about 32 GB at 3,620
+games per process.
+
+**Launch** (as run by the coordinator; the commands for any later relaunch):
 `S2=~/chess-artifacts/operations/rl-deep-fast/stage2; bash $S2/clear_phase_a.sh collect_C`, then
 `setsid nohup bash $S2/launch_phase_a.sh >> $S2/phase_a.log 2>&1 < /dev/null &`
 (no `echo $!`; the launcher writes `$S2/phase_a.pid`). Stop: `kill -TERM $(cat $S2/phase_a.pid)`, then check `ps` for

@@ -9,6 +9,8 @@ themselves are unchanged.
 """
 from __future__ import annotations
 
+import gc
+import weakref
 from typing import Any
 
 import numpy as np
@@ -67,6 +69,47 @@ def test_retain_false_plays_the_same_games_as_the_default() -> None:
     assert _rows(drop_done) == _rows(kept_done)
     assert _rows(drop_done) == [(s.ply_index, np.asarray(s.x).tobytes()
                                  + np.asarray(s.policy_target).tobytes()) for s in kept]
+
+
+def test_retain_false_frees_each_games_rows_before_the_next_game_finishes() -> None:
+    # The memory bound itself: the callback keeps only weakrefs to the rows it was
+    # handed, so once a game is delivered nothing but play_batch can hold them. At
+    # every later game every earlier game's rows must already be dead -- a clear
+    # deferred to the end of the call (or no clear) keeps them alive until return.
+    # One exception, not an accumulation: a finished game whose slot is NOT reused
+    # (the target is already dealt) keeps its rows' inputs alive through the slot's
+    # own records until return -- at most one game per slot. Here that is game 4
+    # (5 games on 2 slots: games 1-3 free their slot for a new game, game 4 does not).
+    earlier: list[weakref.ref[Any]] = []
+    alive_at: list[int] = []
+    rows_per_game: list[int] = []
+    games = 0
+
+    def on_game(batch: CompletedGameBatch) -> None:
+        nonlocal games
+        gc.collect()
+        alive_at.append(sum(1 for r in earlier if r() is not None))
+        earlier.extend(weakref.ref(s.x) for s in batch.samples)
+        rows_per_game.append(len(batch.samples))
+        games += 1
+
+    _, stats = play_batch(
+        UniformPolicyValueModel().eval(), device="cpu",
+        rng=np.random.default_rng(11),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+        games=2, target_games=5,
+        on_game_complete=on_game,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=6, selfplay_fraction=1.0),
+        retain_samples=False,
+    )
+    assert games == 5
+    assert len(earlier) == stats.positions > 0
+    assert alive_at[:4] == [0, 0, 0, 0]
+    assert alive_at[4] <= rows_per_game[3]
 
 
 def test_retain_false_without_callback_is_refused() -> None:
