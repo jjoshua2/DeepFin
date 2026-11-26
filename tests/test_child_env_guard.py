@@ -20,7 +20,10 @@ that takes one: ``env -u X``, ``timeout -s KILL``, ``stdbuf -o L``), is ``sys.ex
 ``.executable`` attribute) or a ``python*`` literal; a single string counts
 when its first word is one under ``shell=True``, when the whole string is a
 python path under ``shell=False`` (the default: spaces belong to the path),
-and when either holds for a non-constant ``shell=``.
+and when either holds for a non-constant ``shell=``. An ``env`` wrapper's
+effects on the two variables are applied: ``NAME=VALUE``, ``-u NAME`` /
+``--unset=NAME``, and ``-i`` / ``--ignore-environment`` / ``-`` (an empty
+environment).
 
 FAIL CLOSED. An env passes only when the guard positively resolves its
 state at the launch; anything it cannot is REPORTED as "cannot be resolved".
@@ -71,7 +74,8 @@ process, or a shell), an unsafe change to ``os.environ`` -- a required
 variable set to another value or removed (``os.environ[...]``, ``pop``,
 ``del``, ``update``, ``clear``, ``monkeypatch.setenv`` / ``delenv``,
 ``os.putenv`` / ``unsetenv``), or any change through a non-constant key -- is
-reported; and ``functools.partial(subprocess.Popen, env=...)`` counts as a
+reported (annotated ``os.environ[K]: T = v`` and augmented ``os.environ[K] += v``
+/ ``os.environ |= {...}`` writes included); and ``functools.partial(subprocess.Popen, env=...)`` counts as a
 python launch (its program is supplied later).
 
 A finding is waived only by ``# gpu-guard: allow: <reason>`` as a ``#``
@@ -172,6 +176,67 @@ def _program(elts: list[ast.expr]) -> ast.expr | None:
             continue
         return e
     return None
+
+
+def _env_wrapper_problems(elts: list[ast.expr]) -> list[str]:
+    """What an ``env`` wrapper in the argv does to the two variables the child
+    gets: ``NAME=VALUE`` sets one, ``-u NAME`` / ``--unset=NAME`` removes one,
+    ``-i`` / ``--ignore-environment`` / ``-`` starts from an empty environment."""
+    out: list[str] = []
+    i = 0
+    while i < len(elts):
+        e = elts[i]
+        word = e.value if isinstance(e, ast.Constant) and isinstance(e.value, str) else None
+        if word is None or word.rsplit("/", 1)[-1] not in _WRAPPERS:
+            return out
+        base = word.rsplit("/", 1)[-1]
+        i += 1
+        cleared = False
+        set_: dict[str, object] = {}
+        while i < len(elts):
+            w = elts[i]
+            if not (isinstance(w, ast.Constant) and isinstance(w.value, str)):
+                break
+            t = w.value
+            if base == "env" and t in ("-i", "--ignore-environment", "-"):
+                cleared = True
+                i += 1
+                continue
+            if base == "env" and t in ("-u", "--unset"):
+                nxt = elts[i + 1] if i + 1 < len(elts) else None
+                name = nxt.value if isinstance(nxt, ast.Constant) and isinstance(nxt.value, str) else None
+                if name is None:
+                    out.append("an env wrapper unsets a non-constant name")
+                else:
+                    set_[name] = _REMOVED
+                i += 2
+                continue
+            if base == "env" and t.startswith("--unset="):
+                set_[t.split("=", 1)[1]] = _REMOVED
+                i += 1
+                continue
+            if base == "env" and "=" in t and not t.startswith("-"):
+                name, value = t.split("=", 1)
+                set_[name] = value
+                i += 1
+                continue
+            if t in _WORD_OPTIONS.get(base, ()):
+                i += 2
+                continue
+            if (t.startswith("-") or "=" in t or t.replace(".", "", 1).rstrip("smhd").isdigit()
+                    or re.fullmatch(r"0[xX][0-9a-fA-F]+|[0-9][0-9,-]*", t)):
+                i += 1
+                continue
+            break
+        for key, want in GPU_FREE.items():
+            if key in set_:
+                if set_[key] is _REMOVED:
+                    out.append(f"the env wrapper removes {key}")
+                elif set_[key] != want:
+                    out.append(f"the env wrapper sets {key} to {set_[key]!r}")
+            elif cleared:
+                out.append(f"no {key} (the env wrapper starts from an empty environment)")
+    return out
 
 
 def _scopes(tree: ast.Module) -> list[ast.AST]:
@@ -655,6 +720,19 @@ def _environ_writes(scope_nodes: list[ast.AST]) -> list[tuple[int, list[str]]]:
             for t in n.targets:
                 if isinstance(t, ast.Subscript) and _is_os_environ(t.value):
                     judge(n.lineno, t.slice, n.value)
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Subscript) and _is_os_environ(n.target.value):
+            judge(n.lineno, n.target.slice, n.value)  # os.environ[K]: str = v
+        elif isinstance(n, ast.AugAssign):
+            t = n.target
+            if isinstance(t, ast.Subscript) and _is_os_environ(t.value):
+                judge(n.lineno, t.slice, None)  # os.environ[K] += v: the new value is not a constant
+            elif _is_os_environ(t):
+                v = n.value
+                if isinstance(n.op, ast.BitOr) and isinstance(v, ast.Dict) and all(k is not None for k in v.keys):
+                    for k, val in zip(v.keys, v.values):
+                        judge(n.lineno, k, val)  # os.environ |= {...}
+                else:
+                    out.append((n.lineno, ["os.environ updated from an unknown mapping in a function that starts a child"]))
         elif isinstance(n, ast.Delete):
             for t in n.targets:
                 if isinstance(t, ast.Subscript) and _is_os_environ(t.value):
@@ -747,6 +825,7 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
                 continue
             argv_node, env_node, command_line = launch
             shell: bool | None = False
+            argv: list[ast.expr] | None = None
             if isinstance(argv_node, (ast.Name, ast.List, ast.Tuple)):
                 argv = _resolve_argv(argv_node, nodes)
                 program = _program(argv) if argv is not None else None
@@ -762,9 +841,9 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
             except _Unresolved as why:
                 found.append((node.lineno, [f"{_UNRESOLVED}{why}"]))
                 continue
-            if env is None:
-                continue
-            problems = _problems(env)
+            problems = _problems(env) if env is not None else []
+            if argv is not None:
+                problems += _env_wrapper_problems(argv)
             if problems:
                 found.append((node.lineno, problems))
     allowed = _allowed_lines(source)
@@ -1133,6 +1212,10 @@ _TABLE_UNSAFE.update({
     "codex5_setdefault_after_dynamic_key": "def f(key):\n    env = {}\n    env[key] = '0'\n    env.setdefault('CUDA_VISIBLE_DEVICES', '')\n    env.setdefault('PYTORCH_NVML_BASED_CUDA_CHECK', '1')\n    subprocess.run([sys.executable], env=env)",
     "codex6_scalar_python_path_with_a_space": "def f():\n    subprocess.run('/opt/my env/bin/python3', env={})",
     "codex7_merge_source_lacks_a_key": "def f():\n    env = {'CUDA_VISIBLE_DEVICES': '0'}\n    patch = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    patch.pop('CUDA_VISIBLE_DEVICES')\n    env.update(patch)\n    env.setdefault('CUDA_VISIBLE_DEVICES', '')\n    subprocess.run([sys.executable], env=env)",
+    "codex9_os_environ_annotated_write": "def f():\n    os.environ['CUDA_VISIBLE_DEVICES']: str = '0'\n    subprocess.run([sys.executable])",
+    "codex9_os_environ_or_assign": "def f():\n    os.environ |= {'CUDA_VISIBLE_DEVICES': '0'}\n    subprocess.run([sys.executable])",
+    "codex10_env_wrapper_sets_a_gpu": "def f():\n    subprocess.run(['env', 'CUDA_VISIBLE_DEVICES=0', sys.executable], env=gpu_free_env({}))",
+    "codex10_env_wrapper_clears": "def f():\n    subprocess.run(['env', '-i', sys.executable], env=gpu_free_env({}))",
     "codex8_match_capture_rebinds": "def f(x):\n    env = {}\n    env.update(CUDA_VISIBLE_DEVICES='', PYTORCH_NVML_BASED_CUDA_CHECK='1')\n    match x:\n        case {'child_env': env}:\n            pass\n    subprocess.run([sys.executable], env=env)",
 })
 _TABLE_SAFE = {
@@ -1145,6 +1228,8 @@ _TABLE_SAFE = {
     's07_copy_of_safe': "def f():\n    base = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    env = dict(base, PATH='/bin')\n    subprocess.run([sys.executable], env=env)",
     's08_or_merge': "def f():\n    env = {'PATH': '/bin'} | OK\n    subprocess.run([sys.executable], env=env)",
     # the merge fix keeps the destination's safe value for a key the source lacks
+    's10_env_wrapper_benign_assignment': "def f():\n    subprocess.run(['env', 'A=1', sys.executable], env=gpu_free_env({}))",
+    's11_env_wrapper_clears_then_sets_both': "def f():\n    subprocess.run(['env', '-i', 'CUDA_VISIBLE_DEVICES=', 'PYTORCH_NVML_BASED_CUDA_CHECK=1', sys.executable])",
     's09_merge_source_lacks_a_key_dest_safe': "def f():\n    env = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    patch = {'CUDA_VISIBLE_DEVICES': '0', 'X': '1'}\n    patch.pop('CUDA_VISIBLE_DEVICES')\n    env.update(patch)\n    subprocess.run([sys.executable], env=env)",
 }
 _TABLE_DOCUMENTED_FALSE_POSITIVES = {
@@ -1159,8 +1244,8 @@ def test_every_adversarial_unsafe_child_is_reported_and_safe_ones_pass() -> None
     assert silent == []
     reported = {k for k, body in _TABLE_SAFE.items() if scratch_env_children(_TABLE_HEADER + body)}
     assert reported == _TABLE_DOCUMENTED_FALSE_POSITIVES
-    assert len(_TABLE_UNSAFE) == 55 + 8 + 7 + 4
-    assert len(_TABLE_SAFE) == 9
+    assert len(_TABLE_UNSAFE) == 55 + 8 + 7 + 4 + 4
+    assert len(_TABLE_SAFE) == 11
 
 
 def test_a_marked_launch_is_waived_and_only_with_a_reason() -> None:
