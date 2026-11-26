@@ -714,8 +714,9 @@ A step's first guard therefore refuses at once (exit 8). The between-step re-gua
 halts phase A at its next step boundary: it does not corrupt the run, it stops it. Run such audits in a pause window or
 between phases.
 
-**Deviation (coordinator, disclosed):** phase A was relaunched at about 18:50 EST on the reviewed pin `d08b03adb`
-before this PR merged. The fix code and the pin were approved in review; only this PR's test and record text were still
+**Deviation (coordinator, disclosed):** phase A was relaunched at 18:02:07 EST on the reviewed pin `d08b03adb`
+before this PR merged (`stage2/resume.log`: launch pid 3334645, launcher sha256 `2df225b4…`). The partial first
+attempt was moved by `clear_phase_a.sh` to `stage2/aborted_20261126T180159.Kbix` at 18:01:59. The fix code and the pin were approved in review; only this PR's test and record text were still
 open. **Take-effect proof for the fix:** in `stage2/phase_a.log`, the `rss collect_C session_total=…` line, logged every
 600 s, stays flat over the collect. Before the fix, each process grew by about 8.9 MB per game, to about 32 GB at 3,620
 games per process.
