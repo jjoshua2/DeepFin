@@ -458,7 +458,10 @@ def test_slot_inference_client_serializes_threaded_requests() -> None:
     calls = 0
     guard = threading.Lock()
 
-    def _fake_eval(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _fake_eval(
+        x: np.ndarray, live_rows: int | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del live_rows  # interface conformance for SlotInferenceClient._evaluate_encoded_locked
         nonlocal active, max_active, calls
         with guard:
             active += 1
@@ -537,9 +540,10 @@ def test_multi_slot_inference_client_fans_out_requests() -> None:
             x: np.ndarray,
             relations: np.ndarray | None = None,
             *,
+            live_rows: int | None = None,
             _idx: int = idx,
         ) -> tuple[np.ndarray, np.ndarray]:
-            del relations  # interface conformance for SlotInferenceClient.evaluate_encoded
+            del relations, live_rows  # interface conformance for SlotInferenceClient.evaluate_encoded
             calls.append(_idx)
             return (
                 np.zeros((x.shape[0], 4672), dtype=np.float32),
@@ -576,9 +580,12 @@ def test_multi_slot_inference_client_uses_first_free_slot() -> None:
             calls.append(idx)
 
     def _slow_eval(
-        x: np.ndarray, relations: np.ndarray | None = None,
+        x: np.ndarray,
+        relations: np.ndarray | None = None,
+        *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        del relations  # interface conformance for SlotInferenceClient.evaluate_encoded
+        del relations, live_rows  # interface conformance for SlotInferenceClient.evaluate_encoded
         _record(0)
         slow_started.set()
         assert release_slow.wait(timeout=1.0)
@@ -588,9 +595,12 @@ def test_multi_slot_inference_client_uses_first_free_slot() -> None:
         )
 
     def _fast_eval(
-        x: np.ndarray, relations: np.ndarray | None = None,
+        x: np.ndarray,
+        relations: np.ndarray | None = None,
+        *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        del relations  # interface conformance for SlotInferenceClient.evaluate_encoded
+        del relations, live_rows  # interface conformance for SlotInferenceClient.evaluate_encoded
         _record(1)
         return (
             np.zeros((x.shape[0], 4672), dtype=np.float32),

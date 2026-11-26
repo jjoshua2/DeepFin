@@ -288,13 +288,20 @@ class _SlowFirstCall(DirectGPUEvaluator):
         super().__init__(*a, **kw)
         self.first_seen: set[tuple[int, int]] = set()
 
-    def evaluate_inplace_async(self, bsz, *, slot=0, relations=None):
+    def evaluate_inplace_async(
+        self,
+        bsz: int,
+        *,
+        slot: int = 0,
+        relations: np.ndarray | None = None,
+        live_rows: int | None = None,
+    ):
         if (bsz, slot) not in self.first_seen:
             self.first_seen.add((bsz, slot))
             import time as _time
 
             _time.sleep(0.25)
-        return super().evaluate_inplace_async(bsz, slot=slot, relations=relations)
+        return super().evaluate_inplace_async(bsz, slot=slot, relations=relations, live_rows=live_rows)
 
 
 def test_pool_warmup_runs_every_shape_twice_and_seeds_from_the_second_pass(capsys) -> None:

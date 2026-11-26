@@ -38,8 +38,14 @@ from chess_anti_engine.async_safety import CompletionEvent
 import numpy as np
 import torch
 
-from chess_anti_engine.inference import BatchEvaluator
+from chess_anti_engine.inference import BatchEvaluator, accepts_live_rows
 from chess_anti_engine.uci import wedge
+
+
+def live_rows_kw(live_rows: int | None) -> dict[str, Any]:
+    """Forward ``live_rows`` only when given: a wrapper's call is unchanged
+    otherwise, so an inner without the keyword still works untraced."""
+    return {} if live_rows is None else {"live_rows": int(live_rows)}
 
 
 def supports_inplace_api(evaluator: object) -> bool:
@@ -70,6 +76,7 @@ class _CoalesceRequest:
     legal_counts: np.ndarray | None
     done: threading.Event
     result: list
+    live: int | None = None  # caller's live rows when it padded x upstream (trace only)
 
 
 @dataclass(slots=True)
@@ -85,12 +92,14 @@ class ThreadSafeGPUDispatcher:
         self._lock = threading.Lock()
 
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        kw = live_rows_kw(live_rows)
         with self._lock:
             if relations is not None:
-                return self._eval.evaluate_encoded(x, relations=relations)
-            return self._eval.evaluate_encoded(x)
+                return self._eval.evaluate_encoded(x, relations=relations, **kw)
+            return self._eval.evaluate_encoded(x, **kw)
 
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
@@ -161,19 +170,27 @@ class ThreadSafeGPUDispatcher:
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = live_rows_kw(live_rows)
         with self._lock:
             if relations is not None:
-                return self._eval.evaluate_inplace_async(bsz, slot=slot, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
-            return self._eval.evaluate_inplace_async(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
+                return self._eval.evaluate_inplace_async(bsz, slot=slot, relations=relations, **kw)  # pyright: ignore[reportAttributeAccessIssue]
+            return self._eval.evaluate_inplace_async(bsz, slot=slot, **kw)  # pyright: ignore[reportAttributeAccessIssue]
 
     def evaluate_encoded_async(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = live_rows_kw(live_rows)
         with self._lock:
             if relations is not None:
-                return self._eval.evaluate_encoded_async(x, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
-            return self._eval.evaluate_encoded_async(x)  # pyright: ignore[reportAttributeAccessIssue]
+                return self._eval.evaluate_encoded_async(x, relations=relations, **kw)  # pyright: ignore[reportAttributeAccessIssue]
+            return self._eval.evaluate_encoded_async(x, **kw)  # pyright: ignore[reportAttributeAccessIssue]
+
+    @property
+    def accepts_live_rows(self) -> bool:
+        return accepts_live_rows(self._eval)
 
 
 def bootstrap_cudagraph_tls() -> None:
@@ -271,13 +288,15 @@ class CUDAOwnerDispatcher:
             self.close()
 
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        kw = live_rows_kw(live_rows)
         return cast(
             "tuple[np.ndarray, np.ndarray]",
             self._call(
-                lambda: self._inner.evaluate_encoded(x, relations=relations)
-                if relations is not None else self._inner.evaluate_encoded(x)
+                lambda: self._inner.evaluate_encoded(x, relations=relations, **kw)
+                if relations is not None else self._inner.evaluate_encoded(x, **kw)
             ),
         )
 
@@ -292,15 +311,21 @@ class CUDAOwnerDispatcher:
         )
 
     def evaluate_encoded_async(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = live_rows_kw(live_rows)
         return cast(
             "tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]",
             self._call(
-                lambda: self._inner.evaluate_encoded_async(x, relations=relations)
-                if relations is not None else self._inner.evaluate_encoded_async(x)
+                lambda: self._inner.evaluate_encoded_async(x, relations=relations, **kw)
+                if relations is not None else self._inner.evaluate_encoded_async(x, **kw)
             ),
         )
+
+    @property
+    def accepts_live_rows(self) -> bool:
+        return accepts_live_rows(self._inner)
 
     @property
     def async_backend(self) -> Any:
@@ -323,14 +348,16 @@ class CUDAOwnerDispatcher:
 
     def evaluate_inplace_async(
         self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
+        kw = live_rows_kw(live_rows)
         return cast(
             "tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]",
             self._call(
                 lambda: self._inner.evaluate_inplace_async(
-                    bsz, slot=slot, relations=relations,
+                    bsz, slot=slot, relations=relations, **kw,
                 ) if relations is not None else self._inner.evaluate_inplace_async(
-                    bsz, slot=slot,
+                    bsz, slot=slot, **kw,
                 )
             ),
         )
@@ -438,8 +465,15 @@ class BatchCoalescingDispatcher:
         with contextlib.suppress(Exception):
             self.close()
 
+    @property
+    def accepts_live_rows(self) -> bool:
+        """Per-request ``live_rows`` are summed over a coalesced submit and
+        forwarded, when the inner evaluator takes the keyword."""
+        return accepts_live_rows(self._inner)
+
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
   # Fail fast on single requests that can never be dispatched. Without
   # this, an oversize lone request would sit in pending and eventually
@@ -450,7 +484,7 @@ class BatchCoalescingDispatcher:
         if n > self._max_batch:
             raise ValueError(
                 f"request batch {n} > coalescer max {self._max_batch}")
-        return self._enqueue(x, relations=relations)
+        return self._enqueue(x, relations=relations, live_rows=live_rows)
 
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
@@ -472,6 +506,7 @@ class BatchCoalescingDispatcher:
         relations: np.ndarray | None = None,
         legal_flat: np.ndarray | None = None,
         legal_counts: np.ndarray | None = None,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         n = int(x.shape[0])
         if n > self._max_batch:
@@ -484,7 +519,7 @@ class BatchCoalescingDispatcher:
             if self._shutdown.is_set():
                 raise RuntimeError("BatchCoalescingDispatcher is closed")
             self._pending.append(_CoalesceRequest(
-                x, relations, legal_flat, legal_counts, done, result,
+                x, relations, legal_flat, legal_counts, done, result, live_rows,
             ))
         self._wake.set()
         done.wait()
@@ -568,10 +603,17 @@ class BatchCoalescingDispatcher:
                             xs, legal_flat, legal_counts,
                         )
                     else:
+                        # Only set when accepts_live_rows(self._inner) said so.
+                        kw = (
+                            live_rows_kw(sum(
+                                e.x.shape[0] if e.live is None else e.live for e in batch
+                            ))
+                            if any(e.live is not None for e in batch) else {}
+                        )
                         pol, wdl = (
-                            self._inner.evaluate_encoded(xs, relations=rels)
+                            self._inner.evaluate_encoded(xs, relations=rels, **kw)
                             if rels is not None
-                            else self._inner.evaluate_encoded(xs)
+                            else self._inner.evaluate_encoded(xs, **kw)
                         )
                     row_offset = 0
                     pol_offset = 0
@@ -650,15 +692,22 @@ class MultiGPUDispatcher:
         self._select_lock = threading.Lock()
         self._rr = 0  # round-robin tiebreaker cursor
 
+    @property
+    def accepts_live_rows(self) -> bool:
+        """Forwarded to the picked device, so every device must take it."""
+        return all(accepts_live_rows(ev) for ev in self._evals)
+
     def evaluate_encoded(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
+        kw = live_rows_kw(live_rows)
         idx = self._pick_device()
         try:
             with self._locks[idx]:
                 if relations is not None:
-                    return self._evals[idx].evaluate_encoded(x, relations=relations)
-                return self._evals[idx].evaluate_encoded(x)
+                    return self._evals[idx].evaluate_encoded(x, relations=relations, **kw)
+                return self._evals[idx].evaluate_encoded(x, **kw)
         finally:
             with self._select_lock:
                 self._inflight[idx] -= 1
@@ -677,7 +726,8 @@ class MultiGPUDispatcher:
                 self._inflight[idx] -= 1
 
     def evaluate_encoded_async(
-        self, x: np.ndarray, relations: np.ndarray | None = None,
+        self, x: np.ndarray, relations: np.ndarray | None = None, *,
+        live_rows: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, CompletionEvent | None]:
         """The async entry, run SYNCHRONOUSLY: the result is copied out and no
         completion event is returned.
@@ -691,7 +741,7 @@ class MultiGPUDispatcher:
         same device could overwrite them; owned copies cannot race. The lost
         overlap only affects this non-default multi-device routing chain.
         """
-        pol, wdl = self.evaluate_encoded(x, relations=relations)
+        pol, wdl = self.evaluate_encoded(x, relations=relations, live_rows=live_rows)
         return (
             torch.from_numpy(np.array(pol, dtype=np.float32, copy=True)),
             torch.from_numpy(np.array(wdl, dtype=np.float32, copy=True)),
