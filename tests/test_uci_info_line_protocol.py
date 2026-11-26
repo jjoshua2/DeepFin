@@ -42,6 +42,7 @@ from chess_anti_engine.uci.engine import Engine
 from chess_anti_engine.uci.protocol import parse_command
 from chess_anti_engine.uci.search import SearchWorker, _board_line_mate
 from chess_anti_engine.uci.time_manager import Deadline
+from tests._child_env import gpu_free_env
 
 FORCED_INTO_MATE = "7k/8/6KQ/8/8/8/8/8 b - - 0 1"  # Kg8 only, then Qg7#
 FORCED = "7k/8/8/8/8/8/6q1/R6K w - - 0 1"  # Kxg2 only: K+R v K, nothing settled
@@ -525,7 +526,7 @@ def _bench(ckpt: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(repo / "scripts" / "bench_uci_engine.py"), "--checkpoint", str(ckpt),
          "--device", "cpu", "--no-compile", "--repeats", "1", *args],
-        capture_output=True, text=True, env=env, timeout=600, check=False,
+        capture_output=True, text=True, env=gpu_free_env(env), timeout=600, check=False,
     )
 
 

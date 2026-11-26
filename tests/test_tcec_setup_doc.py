@@ -32,6 +32,7 @@ from chess_anti_engine.uci.selfcheck import build_parser as build_selfcheck_pars
 from chess_anti_engine.uci.selfcheck import enforce_startup_gate
 from chess_anti_engine.uci.subprocess_client import LineReader, send_line
 from tests.test_uci_smoke import _make_tiny_checkpoint, _spawn_engine
+from tests._child_env import gpu_free_env
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "TCEC_SETUP.md"
@@ -377,7 +378,7 @@ def _engine_rc(args: list[str], stdin: str = "") -> tuple[int, str]:
     env.update(PYTHONPATH=str(ROOT), CUDA_VISIBLE_DEVICES="")
     proc = subprocess.run(
         [sys.executable, "-m", "chess_anti_engine.uci", *args], input=stdin,
-        capture_output=True, text=True, timeout=300, env=env, cwd=ROOT, check=False,
+        capture_output=True, text=True, timeout=300, env=gpu_free_env(env), cwd=ROOT, check=False,
     )
     return proc.returncode, proc.stdout + proc.stderr
 

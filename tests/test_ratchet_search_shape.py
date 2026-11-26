@@ -342,6 +342,10 @@ def _sandbox(tmp_path: Path, *, checkpoint: str = "checkpoint_000478") -> Path:
 
 _NVIDIA_SMI_STUB = """#!/bin/sh
 echo "$@" >> "$(dirname "$0")/../nvidia_smi_calls.txt"
+if [ -n "${NVIDIA_SMI_OUT+set}" ]; then
+    printf '%s\\n' "$NVIDIA_SMI_OUT"
+    exit 0
+fi
 exit 1
 """
 
@@ -350,8 +354,9 @@ def _stubbed_path(root: Path) -> str:
     """PATH with a stub `nvidia-smi` first. daily_gate_ratchet.sh's VRAM-floor
     check runs `nvidia-smi`; the real one opens the GPU adapter (/dev/dxg on
     WSL2) whatever `CUDA_VISIBLE_DEVICES` says. The stub answers like a host
-    without one (exit 1: eager, as on CI) and records each call in
-    `root/nvidia_smi_calls.txt`."""
+    without one (exit 1: eager, as on CI) unless `NVIDIA_SMI_OUT` is set in the
+    child's env (then it prints that as the free-MiB reading), and records each
+    call in `root/nvidia_smi_calls.txt`."""
     import subprocess
 
     stub = root / "stub_bin" / "nvidia-smi"
@@ -386,6 +391,23 @@ def _run_ratchet(root: Path, *args: str, mode: str = "good", env: dict | None = 
     return r.returncode, r.stdout + r.stderr
 
 
+@pytest.mark.parametrize(("free_mib", "compiled"), [
+    ("24000", True), ("10240", True), ("10239", False), ("8000", False), ("N/A", False), ("", False),
+    # one line per GPU: the script reads only the first (GPU 0)
+    ("24000\n2000", True), ("2000\n24000", False),
+])
+def test_the_arena_compiles_only_above_the_vram_floor(tmp_path, free_mib, compiled) -> None:
+    """daily_gate_ratchet.sh's VRAM floor protects a live trainer from an OOM:
+    the arena compiles only with at least 10240 MiB free; below it, or with a
+    reading that is not a number (absent, unparseable), it runs eager."""
+    root = _sandbox(tmp_path)
+    rc, out = _run_ratchet(root, env={"NVIDIA_SMI_OUT": free_mib})
+    assert rc == 0, out
+    args = (root / "arena_calls.txt").read_text()
+    assert ("--compile on" in args) is compiled, args
+    assert ("--no-compile" in args.split()) is (not compiled), args
+
+
 def _arena_launches(root: Path) -> int:
     p = root / "arena_calls.txt"
     return len(p.read_text().splitlines()) if p.exists() else 0
@@ -406,8 +428,10 @@ def test_a_readable_arena_writes_a_row_and_exits_zero(tmp_path) -> None:
     root = _sandbox(tmp_path)
     rc, out = _run_ratchet(root)
     assert rc == 0, f"a run that wrote a row must exit 0, got {rc}:\n{out}"
-    # The VRAM-floor check reached the stub, never the real nvidia-smi.
+    # The VRAM-floor check reached the stub, never the real nvidia-smi; with
+    # no reading (as on a host without one) the arena runs eager.
     assert (root / "nvidia_smi_calls.txt").read_text().startswith("--query-gpu=memory.free"), out
+    assert "--no-compile" in (root / "arena_calls.txt").read_text().split(), out
     rows = _csv_rows(root)
     assert len(rows) == 1, f"expected one vs_boot512 row (day 1 has no vs_prev): {rows}"
     assert rows[0].endswith(",training"), rows[0]

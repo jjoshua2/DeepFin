@@ -18,6 +18,7 @@ from chess_anti_engine.tune.trainable_config_ops import _reload_yaml_into_config
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 from chess_anti_engine.utils.sequential_selfplay import STOP_BEFORE_TRAINING_KEY as KEY
+from tests._child_env import gpu_free_env
 
 
 def test_yaml_to_trial_and_restart_only_reload(tmp_path: Path) -> None:
@@ -73,7 +74,7 @@ def test_barrier_waits_for_real_worker_broker_and_stamped_engine_exit() -> None:
                  for _ in range(2)]
     processes.append(subprocess.Popen(
         [sys.executable, '-c', 'import time; time.sleep(60)'],
-        env=os.environ | {runtime.CAE_ENGINE_MARKER_ENV: str(processes[0].pid)},
+        env=gpu_free_env(os.environ | {runtime.CAE_ENGINE_MARKER_ENV: str(processes[0].pid)}),
     ))
     workers = [processes[0]]
     broker: list[subprocess.Popen[bytes] | None] = [processes[1]]

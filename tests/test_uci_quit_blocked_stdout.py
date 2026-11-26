@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_uci_smoke import _make_tiny_checkpoint
+from tests._child_env import gpu_free_env
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="needs /proc and F_SETPIPE_SZ",
@@ -94,7 +95,7 @@ class _Engine:
         self.proc = subprocess.Popen(
             [sys.executable, "-u", *entry,
              "--checkpoint", str(checkpoint), "--device", "cpu", "--no-compile"],
-            stdin=subprocess.PIPE, stdout=w, stderr=self._stderr, bufsize=0, env=env,
+            stdin=subprocess.PIPE, stdout=w, stderr=self._stderr, bufsize=0, env=gpu_free_env(env),
         )
         os.close(w)
         self._r = r

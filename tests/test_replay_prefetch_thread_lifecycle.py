@@ -35,6 +35,7 @@ from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 
 from tests.conftest import PREFETCH_THREAD_NAME_PREFIX, reaped_prefetch_buffer_count
+from tests._child_env import gpu_free_env
 
 # Set by the parent process on the child run below, where the leaky file has
 # definitely been executed and the reap counter therefore MUST have moved.
@@ -178,7 +179,7 @@ def test_leaky_replay_file_leaves_no_prefetch_thread_behind() -> None:
             f"tests/{probe}",
             "-q", "-p", "no:cacheprovider",
         ],
-        capture_output=True, text=True, cwd=repo_root, env=env, timeout=600, check=False,
+        capture_output=True, text=True, cwd=repo_root, env=gpu_free_env(env), timeout=600, check=False,
     )
     assert out.returncode == 0, (
         "a pytest run of the leaky replay file followed by the prefetch-thread probe "

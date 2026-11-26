@@ -27,11 +27,16 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-@pytest.mark.parametrize("node", ["/dev/dxg", "/nonexistent/dxg"], ids=["host-node", "no-node"])
+@pytest.mark.parametrize("node", [
+    pytest.param("/dev/dxg", id="host-node",
+                 marks=pytest.mark.skipif(not os.path.exists("/dev/dxg"), reason="no /dev/dxg (not WSL2)")),
+    pytest.param("/nonexistent/dxg", id="no-node"),
+])
 def test_is_available_under_the_suites_conftest_leaves_dev_dxg_unopened(tmp_path, node) -> None:
     env = {k: v for k, v in os.environ.items() if k != "PYTORCH_NVML_BASED_CUDA_CHECK"}
     env["CUDA_VISIBLE_DEVICES"] = ""
     env["CAE_TEST_DXG_NODE"] = node
+    # gpu-guard: allow: the NVML switch is withheld on purpose -- the child is pytest, whose conftest must set it before torch loads (the subject here); CUDA_VISIBLE_DEVICES is "" so the child sees no device either way
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q",
          f"--basetemp={tmp_path / 'inner'}", f"--junitxml={tmp_path / 'inner.xml'}",

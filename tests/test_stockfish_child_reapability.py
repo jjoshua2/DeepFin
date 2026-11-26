@@ -35,6 +35,7 @@ from chess_anti_engine.tune.process_cleanup import (
     list_pids_with_env,
     terminate_engines_owned_by,
 )
+from tests._child_env import gpu_free_env
 
 # ⚑ MODULE-WIDE, not per-test. Every mechanism here is Linux-only -- prctl for
 # PDEATHSIG, procfs for the env marker and the zombie state -- and even the
@@ -53,7 +54,8 @@ _STUB = "import time; time.sleep(600)"
 def _spawn_stub(env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
     """A stand-in engine, spawned exactly as `uci.py` spawns the real one."""
     return subprocess.Popen(
-        [sys.executable, "-c", _STUB], start_new_session=True, env=env,
+        [sys.executable, "-c", _STUB], start_new_session=True,
+        env=gpu_free_env(dict(os.environ) if env is None else env),
     )
 
 

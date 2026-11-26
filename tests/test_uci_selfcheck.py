@@ -26,6 +26,7 @@ import torch
 
 from chess_anti_engine.uci import selfcheck as sc
 from chess_anti_engine.utils.syzygy import syzygy_roots
+from tests._child_env import gpu_free_env
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -792,7 +793,7 @@ def _engine_subprocess(prelude: str, *args: str) -> subprocess.CompletedProcess[
     env["CUDA_VISIBLE_DEVICES"] = ""
     return subprocess.run(
         [sys.executable, "-c", code, *args], input="uci\nisready\nquit\n",
-        capture_output=True, text=True, timeout=120, env=env, cwd=REPO_ROOT, check=False,
+        capture_output=True, text=True, timeout=120, env=gpu_free_env(env), cwd=REPO_ROOT, check=False,
     )
 
 
@@ -873,7 +874,7 @@ def _entry_subprocess(prelude: str, entry: str, *args: str) -> subprocess.Comple
     env.update(PYTHONPATH=str(REPO_ROOT), CUDA_VISIBLE_DEVICES="")
     return subprocess.run(
         [sys.executable, "-c", code, *args], input="uci\nisready\nquit\n",
-        capture_output=True, text=True, timeout=180, env=env, cwd=REPO_ROOT, check=False,
+        capture_output=True, text=True, timeout=180, env=gpu_free_env(env), cwd=REPO_ROOT, check=False,
     )
 
 
@@ -944,7 +945,7 @@ def _setup_build(root: Path, *extra: str, ok: bool = True) -> list[str]:
            if not k.startswith("CAE_EXT_") and k not in ("CFLAGS", "LDFLAGS", "LDSHARED")}
     proc = subprocess.run(
         [sys.executable, "setup.py", "build_ext", "--inplace", *extra],
-        cwd=root, env=env, capture_output=True, text=True, timeout=600, check=False,
+        cwd=root, env=gpu_free_env(env), capture_output=True, text=True, timeout=600, check=False,
     )
     assert (proc.returncode == 0) is ok, proc.stdout[-3000:] + proc.stderr[-3000:]
     return sorted(line.split("/")[-1].split(".")[0]

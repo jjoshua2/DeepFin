@@ -23,6 +23,7 @@ import torch
 from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.uci.subprocess_client import LineReader as _LineReader
 from chess_anti_engine.uci.subprocess_client import send_line as _send
+from tests._child_env import gpu_free_env
 
 
 def _make_tiny_checkpoint(tmp_path: Path) -> Path:
@@ -62,7 +63,7 @@ def _spawn_engine(
          *(("--device", devices) if "," not in devices else ("--devices", devices)),
          "--compile" if compiled else "--no-compile", *extra],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, env=env,
+        text=True, bufsize=1, env=gpu_free_env(env),
     )
 
 

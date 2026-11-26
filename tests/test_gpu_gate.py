@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from chess_anti_engine.utils import gpu_gate as g
+from tests._child_env import gpu_free_env
 
 REPO = Path(__file__).resolve().parents[1]
 UID = 4242
@@ -359,8 +360,11 @@ def test_cli_and_wrapper_exit_codes(tmp_path, cmd):
 
 
 def test_cli_without_test_seam_short_circuits_cpu_only(tmp_path):
-    env = cli_env(tmp_path, 30000)
-    env.pop(g.ENV_TEST)
+    # cli_env already sets both GPU-free variables; the wrap and the literal key let the
+    # child-env guard resolve this env statically (tests/test_child_env_guard.py)
+    env = gpu_free_env(cli_env(tmp_path, 30000))
+    assert g.ENV_TEST == "CAE_GPU_GATE_TEST"
+    env.pop("CAE_GPU_GATE_TEST")
     r = subprocess.run([sys.executable, "-m", "chess_anti_engine.utils.gpu_gate", "--tool", "t"],
                        env=env, capture_output=True, text=True, check=False, timeout=120)
     assert r.returncode == 0
