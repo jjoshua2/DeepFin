@@ -1,10 +1,30 @@
 # 2026-11-21: RL run 1 — full-width root round (`--root-full-width`): cost, target audit, search strength, training test (pre-registration)
 
-**Status: registered, not launched.**
-- **Stages 0–2** need two things before they start: this record is reviewed and merged, and the GPU queue has
-  released the card. Every launcher refuses until both queue markers exist (see [the GPU guard](#the-gpu-guard)).
-- **Stage 3 is NOT AUTHORISED.** It needs the owner's go-ahead. The coordinator records it in the bank as
-  `stage3/OWNER_GO`, and one command then runs the whole stage.
+**Status: registered, not launched; re-pinned to `0d4d11572275095f883f22df17d5b7f25683e41b` (forward chunking, PR #1511) by
+[Addendum 2](#addendum-2-2026-11-22-the-re-pin-to-forward-chunking-and-a-second-full-width-arm-c-wide-candidates),
+which also makes the registered full-width arm the wide arm, `fw_wide`.**
+- **The old pin `fd8c0ce08` and every stage command written for it are superseded (addendum 2026-11-22).**
+  - **Why:** at that pin the wide full-width shapes went over the card at 3 × 128.
+    - `--topk 64` was refused by the collect's memory check
+      (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide_20261122/RESULT.md` [`1c0ba196`]).
+    - `--topk 32` and `--topk 21` both aborted at about 31.8 GB
+      (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide2_20261122/RESULT.md` [`f36a10c5`]).
+  - **With forwards bounded at 512 rows**, the same 3 × 128 shape peaked at 10,012 MiB for off, 10,208 for the wide arm
+    (`--topk 32`) and 9,848 for B (`--topk 16`)
+    (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/chunk_meas_20261122/README.md` [`ff0f38d5`],
+    `SHA256SUMS` [`91109598`], with `ADDENDUM_1.md` [`00fc377c`] correcting an arithmetic slip in the README).
+  - **The bank can enforce such a hold.** A top-level `HOLD_REPIN` marker makes `gpu_guard.sh` v8, which every stage
+    launcher sources first, refuse every stage with exit 14, and `guard_retry` refuses on it at once. The bank
+    revision carrying Addendum 2 ships WITHOUT the marker, because the re-pin is in it. The mechanism and its harness
+    cases stay for any future hold.
+- **Stages 0–2** need two things before they start: this record (with Addendum 2) is reviewed and merged, and the
+  GPU queue has released the card. Every launcher refuses until both queue markers exist (see
+  [the GPU guard](#the-gpu-guard)).
+- **Stage 3 is authorised by the owner's standing statement of 2026-11-22: "You dont have to wait for me to approve gpu use it dont have time ill just tell you to stop if necessary" (addendum 2026-11-22).** It is launched on the operator's release only
+  after Stages 0–2 have passed by their registered rules and been read in-session. The coordinator records that
+  in the bank as `stage3/OWNER_GO`, a file that quotes the owner's statement (as the generation-2 record's does),
+  and one command then runs the whole stage. Nothing else about the gates
+  changes.
 
 **Queue position:** after the value-anchor screen (#1475) and the sibling-ordering screen (#1481), unless the owner
 reorders.
@@ -103,8 +123,22 @@ roots (`stage1/smoke_cpu/`; a smoke, not a result):
 
 ## The GPU guard
 
-**Which launchers are guarded.** `gpu_guard.sh` v6 (sha256 `c8697d517544…`; v1 `a0a2f869a719…`, v2 `997969c87bf3…`,
-v3 `ee073f841a24…`, v4 `b3ffd88cf5f7…`, v5 `30d2226f6a78…`) is sourced by:
+**Addendum (2026-11-22): the guard as first written could never pass on this machine.** v1–v6 refused unless
+`memory.used` < 1,024 MiB. With every queue finished and nothing of ours running, this card reads **3,382 MiB**
+(30 one-second samples, 04:38–04:39 on 2026-11-22: min = max = 3,382 MiB, utilisation mean 0.0%, max 1%; between
+the anchor cells earlier that night it read 3,430 and 3,452 MiB). That memory belongs to the Windows side of WSL2
+(desktop compositor, browser), not to a job. So the old bar refused always, and nobody could have seen it pass,
+because it had only ever been exercised against stubs. v7 replaces it (below), and the guard test now runs the
+guard's two probe commands against the REAL `nvidia-smi` once (read-only), asserting that both parse to integers.
+
+**Memory and utilisation cannot see a loading job.** A reproduction cell started at 04:54:28 read 3,448–3,463 MiB
+at 0–1% utilisation for **six minutes** (until 05:00:15), then 5.5 GB, then 22 GB
+(`~/chess-artifacts/operations/rl-run1-value-anchor-repro/arm_Zq_k11.3.gpu.txt`, 5 s samples). During a job's loading
+phase the process scan (`gpu_scan.sh`, below) and the operator's release file are the only defences; the memory
+band is a backstop.
+
+**Which launchers are guarded.** `gpu_guard.sh` v8 (sha in the table below; earlier versions kept as `.vN`; v8 adds only
+the `HOLD_REPIN` refusal, exit 14, checked right after the stage name and before everything else) is sourced by:
 - `stage0/run_stage0_all.sh` and each `stage0/run_stage0.sh` it starts;
 - `stage1/run_stage1.sh`;
 - `stage2/run_stage2.sh` and each `run_rfw_match.sh` it starts;
@@ -114,33 +148,241 @@ v3 `ee073f841a24…`, v4 `b3ffd88cf5f7…`, v5 `30d2226f6a78…`) is sourced by:
 **One child is not guarded itself.** Stage 3's matches run at the PIN through the follow-up bank's sha-pinned
 `run_followup_match.sh` (`7c8fd065…`). That script has no guard and is not changed. The re-check in
 `launch_stage3.sh` immediately before each of its calls is what guards those matches. A re-check runs the full list
-in the same shell, so it takes the nested-lock path. It waits up to 60 s (`RFW_MEM_WAIT_S`) for memory to fall
-after the previous step exits; it never relaxes the bar. Guard (d)'s `check_load.py` runs with
+in the same shell, so it takes the nested-lock path. It waits up to 60 s (`RFW_MEM_WAIT_S`) for memory to
+return to ≤ `idle_mib` + 512 MiB after the previous step exits; it never relaxes the bar. Guard (d)'s `check_load.py` runs with
 `CUDA_VISIBLE_DEVICES` empty, on the CPU.
 
 The guard refuses unless **all** of these hold:
-- **Memory.** `nvidia-smi --query-gpu=memory.used` is below 1,024 MiB on **every** GPU line (exit 8). Since v5
-  the guard reads every line and the maximum decides; v4 read only the first.
+- **Memory, against the operator's measured idle baseline (v7).** The release line carries it:
+  `stage0 idle_mib=3382 2026-11-22T09:00`. The guard refuses (exit 8) if the line has no `idle_mib=<int>`; if
+  `idle_mib` exceeds a 4,096 MiB sanity cap (nobody may declare a busy card idle); if `memory.used`, the maximum over
+  **every** GPU line, exceeds `idle_mib` + 512 MiB (something else holds the card); or if it is below `idle_mib` −
+  512 MiB (the baseline is stale: re-measure it). The ±512 MiB band:
+  - observed idle drift over six hours is about 70 MiB;
+  - our smallest GPU job holds well over 512 MiB once its context and net are loaded. Banked evidence: in
+    `~/chess-artifacts/operations/rl-claude-20261119/engine-speed-profile/idle/*.gpu` (25 runs, 1 s samples, our net
+    in one engine process), every sample from the 6th second on sat **≥ 911 MiB** above the pre-start idle (median
+    +1,151 MiB for the smallest configuration). One run's first 1 s sample was only +27 MiB: a process in its first
+    second, before its CUDA context exists, is inside the band. No banked sampler of a 4-game arena exists; the
+    engine profile is the closest banked measurement of our smallest job;
+  - idle itself moves between sessions (1,575–2,981 MiB on 2026-11-19/20, 3,382 now), which is why the baseline is
+    measured at release time and goes stale.
   - **It fails closed.** If `nvidia-smi` exits non-zero, or prints anything but an integer, the guard refuses with
-    exit 11. This is new in v4; v3 read an empty output as unreadable but ignored the exit code.
-  - `RFW_MEM_WAIT_S` must be a non-negative integer, or the guard refuses with exit 12 (new in v5). Before v5, a
-    non-integer made the wait loop run forever.
+    exit 11. `RFW_MEM_WAIT_S` must be a non-negative integer (exit 12).
   - **Not `--query-compute-apps`.** Under WSL2 that list cannot be relied on to see another process tree. During
     the incident below it listed this bank's three collects in 62 of 64 samples, but it never listed match 8's
     PID 2337486, which was using the card the whole time.
-- **No running GPU work.** An exact `ps -u <me> -o args` scan finds no `arena_standard.py`, `simple_rl_loop.py`,
-  `count_wrap.py` (Stage 0's collect wrapper, added in v6) or
-  `match_vs_uci.py`. The match is on the script's basename as an argv token; `pgrep -f` is never used.
-  - **It fails closed** (new in v4). If `ps` exits non-zero, or prints nothing, the guard refuses with exit 10.
-    `ps` always lists at least the guard's own shell. v3 read both as "no GPU work".
+- **Utilisation (v7).** Five samples of `utilization.gpu`, one second apart, every GPU line: the maximum must be
+  below 10% (idle here reads 0–1%; a foreign job, or the owner gaming, reads more, and when he games the GPU is not
+  ours). A non-integer or a failed `nvidia-smi` refuses with exit 11.
+- **No GPU job of this user (v7: `gpu_scan.sh`).** One file, owned by this bank. The generation-2 and sibling banks
+  carry v5, byte-identical; this bank carries v6, which adds only the `desc` guard below (Addendum 2). It reads `/proc` only. A same-uid process (Uid from
+  `/proc/<pid>/status`) outside the caller's own ancestors and descendants refuses if:
+  - its argv (`/proc/<pid>/cmdline`, NUL-separated) is a GPU entry point: `basename(argv[0])` is listed (`lc0`,
+    `Ceres`, `deepfin`, a script run directly); or `argv[0]` is `python*` and the first non-option argument has a
+    listed basename, or a `-m` names a module starting `chess_anti_engine`; or `argv[0]` is `bash`/`sh`/`dash`/`zsh`
+    and the first non-option argument has a listed basename; or `argv[0]` is `dotnet` and the first argument that
+    is neither an option nor `exec` has a listed basename. Options are parsed as the programs parse them (scan v5,
+    after the first outside review): python's short options are CLUSTERS (`-um mod`, `-bm mod`, `-uB X.py`,
+    `-Wignore X.py`; an `m` or `c` takes the rest of the cluster or the next word as its value and ends the options;
+    `-X`/`-W` take a value); a shell's long options are single words (`--norc` is not `-c`; `--rcfile`/`--init-file`
+    take a value) and `-o`/`-O`/`+O` take a value. A shell that only mentions a script (`bash -c "sha256sum
+    …/arena_standard.py"`) is not a job: v6's `ps -o args` token scan refused it, v7 does not. **Stated limits of
+    the argv clause:** `python -c "runpy.run_path(…)"`, `python -m cProfile X.py` (any runner module) and
+    `--check-hash-based-pycs <mode> X.py` are not matched, nor is a wrapper that forks a python child (`timeout`,
+    `uv run`) at its own argv (the child is scanned as itself). The release file covers these before a launch, and
+    the device clause once CUDA initialises. Processes of other uids are not scanned; the memory band is their
+    backstop.
+    **CPU-only exemption (argv clause only):** a matched process is exempt iff its exec environment
+    (`/proc/<pid>/environ`) is readable and holds the exact entry `CUDA_VISIBLE_DEVICES=` with an empty value and no
+    other `CUDA_VISIBLE_DEVICES` entry. Such a process cannot reach the card: the rule every agent works under, so
+    agents' pytest children, fake-HOME launcher copies and harnesses do not block the operator. The variable absent,
+    any value, a confusable name, two entries, or an unreadable environ → not exempt. A NOTE names each exempted pid.
+    **Honest limit:** `environ` is the environment at exec; a process can still set the variable itself before
+    importing torch. The device clause catches that only once its CUDA context exists, so the release file and the
+    launch discipline remain the primary defence;
+  - it holds the GPU device open, whatever its name. This clause runs for EVERY non-excluded same-uid process,
+    independently of the argv clause: an empty or unreadable cmdline skips only the argv clause (v4 skipped such a
+    process before the device check; the outside review's surviving mutant). The device is identified by rdev, not by name: the scan stats
+    its own `/dev/dxg` once (it must be a character device, else it refuses: "cannot identify the GPU device"), and
+    a process holds the GPU iff one of its fds, by `stat -L` on `/proc/<pid>/fd/<n>`, is a character device with
+    that major:minor. Every fd is checked, so a holder through another path (a second device node, a bind mount) is
+    caught. A file whose link merely reads "/dev/dxg" but is another file is not a holder (a NOTE names it): v1–v3
+    matched the name, and another agent's namespaced test harness, holding a stand-in, made the real guard refuse
+    (processes of a child pid namespace are visible in the parent's `/proc`, and `readlink` prints the path string
+    whatever it resolves to in that mount namespace). That would have aborted a multi-hour stage at its between-step
+    re-guard. Cost of checking every fd: one scan took 0.26–0.75 s wall on 2026-11-22 with agents working (v4: 62
+    same-uid processes / 561 fds; v5: 0.31–0.32 s for 95 processes / 617 fds);
+  - its fds cannot be stat'ed, so the device check cannot be made for it. Readability is decided by actually
+    reading every fd (`find` lists them, `stat -L` reads each target; exit status and error text kept), never by
+    `access(2)`: access
+    to a proc fd entry also goes through the ptrace check, so `access()` can say yes while every readlink is denied
+    (a non-dumpable process in a user namespace, scanned by a capability-free shell; `gpu_scan.sh` v1 scanned such a
+    `/dev/dxg` holder clean). Listing the directory is not enough either: there `readdir` succeeds while `readlink`
+    is denied. A lister failure whose every error is "No such file or directory" means the process exited mid-scan
+    and is skipped; any other failure, including one with no error text, refuses.
+  - **Allowlist, exactly two:** `argv[0]` equal to `/usr/bin/ssh-agent` or `/usr/bin/gpg-agent` (full path). These
+    are same-uid but non-dumpable by design, so their fd links are unreadable; v1 refused permanently on this
+    machine because of `/usr/bin/ssh-agent` (pid 40). An allowlisted process is skipped for the fd checks only, and
+    the scan prints a NOTE naming it. A read-only check of the real machine on 2026-11-22 found exactly one
+    unreadable same-uid process: `/usr/bin/ssh-agent`.
+  - **The list** is derived, not chosen: every `scripts/*.py` at main `fd756be84` matching `git grep -lE
+    "cuda|--device"` (97 files); every `*.sh` / `*.py` in the follow-up, value-anchor, value-anchor-repro,
+    generation-2, sibling, root_full_width and pilot-value-diagnosis banks that uses cuda, `--device cuda`,
+    `torch.load`, `arena_standard.py`, `simple_rl_loop.py`, `match_vs_uci.py`, lc0 or Ceres (minus the guards and
+    test files), plus the launchers those start; every console script of the package (`[project.scripts]`,
+    identical at the pilot PIN, `ARENA_SHA` and main: `deepfin = chess_anti_engine.uci.cli:main`); and the lc0 and
+    Ceres binaries. 128 names; the derivation is in the file's header.
+  - **Excluded:** the caller's ancestors (the launcher that sourced the guard, and its parents) and the descendants
+    of the caller's shell, so a launcher's between-step re-check does not trip on itself or its own child. Process
+    groups are deliberately NOT excluded: a non-interactive shell starts background jobs in its own group, so a
+    sibling copy of the same launcher started from the same shell line would share it. A sibling is always refused.
+  - Seeing no process of this user at all refuses (the scan must see its own shell).
+  - **Harness rule.** A guard harness whose cases run a listed name WITHOUT an empty `CUDA_VISIBLE_DEVICES` is
+    visible from the host through its child pid namespace, so a real scan refuses while it lives. Such harnesses
+    (this bank's `guard_test.sh` and its mutant runner among them) must not run while a registered stage relies on a
+    re-guard. Both wait, before starting a pass, while the coordinator's `GPU_CHECK_HOLD` file exists (a 5 s file
+    test); the v12 runner waits until it has been absent for 60 s.
+    - **No harness or mutant series runs while ANY registered stage relies on a re-guard (2026-11-22).** That
+      covers this bank's stages and every other bank's: generation 2's `launch_gen2.sh` re-guards before every
+      step, for up to 900 s. A v12 series at `--jobs 4` was started during generation 2 and stopped before its
+      collect→checks boundary for this reason. The hold file cannot protect such a boundary, because no operator
+      check raises it.
+    - **The v12 runner enforces this.** It requires `--banks <root,…>`, the registered bank roots. It refuses to
+      start, and it stops every in-flight harness (killing the namespace's init) within 5 s, while any of them is
+      active:
+      - a process holds an flock on `<bank>/.gpu_launch.lock`. This is read from `/proc/<pid>/fdinfo`, never by
+        taking the lock, which could refuse a real launch starting at that instant. `/proc/locks` omits these
+        locks on this kernel;
+      - or a step marker `<bank>/<name>.started` or `<bank>/<dir>/<name>.started` has no `<name>.exit` beside it.
+        A stale marker left by a crashed step also blocks; clear it first.
+    - Its self-test is `guard_test/runner_selftest_v12.txt`. It checks markers with and without `.exit`, a held
+      and a merely open lock, and that killing the init of an `unshare --fork` ends the tree. Against the live
+      banks, the runner refused while generation 2's launcher held its lock and `collect.started` had no
+      `collect.exit`. **Known limit:** the harness's one read-only case
+    calls the REAL `nvidia-smi` before entering its namespace, and each call opens `/dev/dxg` for about 0.1 s, so a
+    real scan elsewhere can see a holder at that instant. A v11 series ran four harnesses at a time and repeated
+    that throughout. The v12 runner measures the real probe once per series (hold-gated) and passes it to every
+    harness, which then skips the call. It runs one harness at a time by default, and no series runs while a
+    generation-2 stage boundary is in progress.
+    - **Measured (strace, 2026-11-22):** the coordinator approved `--jobs 4` on this evidence.
+      - Method: `strace -f -y -e openat,open,openat2` over one full `run_mutants_v12.py M0` pass (200/200)
+        (`~/chess-artifacts/operations/rl-claude-20261119/guard-dxg-proof-v12/`).
+      - Result: 12 opens of `/dev/dxg`. Two are the runner's single probe, made before the namespace. The other ten
+        come from processes started after the harness exec'd `unshare`, where `/dev/dxg` is the `/dev/full` bind,
+        asserted before any case runs.
+      - **Limit of that proof:** clone and execve were not traced, so the split between inside and outside the
+        namespace rests on process order. After its probe, the runner's only child is the harness, which execs
+        `unshare` without probing once `GT_REAL_*` is set. The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
+    listed process runs WITH the empty entry passes whatever the scan does. Every argv-dependent case therefore
+    reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the exemption would apply.
+  - **Cosmetic defect in v5, fixed in v6 (this bank only, Addendum 2).** A v5 launcher log can show
+    `gpu_scan.sh: line 217: desc: bad array subscript`. It is not a failure. Cause: a process exiting mid-scan
+    leaves its PPid empty, and the descendant loop then indexes `desc[""]`. The test fails, so that process is NOT
+    excluded (the safe direction), and the scan's result is unaffected; it is non-fatal under `set -euo pipefail`
+    (verified). v6 stores `pp[$p]` only when the PPid read is numeric. Harness case (v13): an interposed enumeration
+    of the caller's own shell plus a status file with no PPid line must give no bad-subscript error and scan rc 0.
+    Mutant G34 (v5's unguarded store) prints the error (1 against 0, checked by hand on the two files before the
+    series). The generation-2 and sibling banks keep v5 until their next revision.
+
+**Between-step re-guards retry through a transient GPU user (addendum 2026-11-22).** At about 07:50 on 2026-11-22
+the scan refused, correctly, on an agent's pytest process holding the real device. `torch.cuda.is_available()`
+opens and holds `/dev/dxg` for the process's lifetime even with `CUDA_VISIBLE_DEVICES=` empty, because WSL2's
+`cuInit` opens the adapter before the mask applies. A transient holder like that must delay a registered multi-hour
+stage, not abort it. So (`launch_lib.sh` `guard_retry` / `rfw_top_guard`):
+  - every between-step re-check re-runs the WHOLE guard (release line, memory band, utilisation, process scan, lock)
+    about every 5 s, until it passes or `RFW_REGUARD_WAIT_S` expires (default 900 s; it must be a non-negative
+    integer, else exit 12). Each distinct refusal reason is logged once, with a timestamp, to the stage's
+    `guard.log`, and so is a pass after a wait. The re-check refuses only if the LAST attempt still refuses, with
+    that attempt's reason and a deadline line in the log. A refusal by the operator's release line (revoked,
+    missing, wrong stage) is the operator's intent and refuses at once, never retried;
+  - Stage 3's `reguard` between its steps is this re-check;
+  - the TOP guard of a launcher started by its registered parent (`run_stage0_all.sh` → `run_stage0.sh`,
+    `run_stage2.sh` → `run_rfw_match.sh`) is this re-check too. That covers the gap between Stage 0 runs and between
+    Stage 2 seats. "Started by its registered parent" needs all of the following, and anything else gets the
+    single-shot guard as before (an operator's direct start, or a stray start with a leftover variable):
+    - `RFW_PARENT_PID`, set by the parent on its start line, equals the child's own PPID;
+    - that parent's script fd (`/proc/<pid>/fd/255`) is the registered launcher, and its argv names it;
+    - the child's fd 9 and the parent's fd 9 are both this bank's lock;
+    - a fresh open of the lock cannot take it, while `flock -n 9` on the child's fd succeeds, so the child holds the
+      parent's own inherited lock;
+  - the first guard of a stage stays single-shot. **Consequence, stated plainly:** while ANY agent's CPU pytest
+    holds `/dev/dxg`, a stage LAUNCH is refused outright. On WSL2, `torch.cuda.is_available()` and the first CPU
+    `backward()` open the device for the process lifetime, even with `CUDA_VISIBLE_DEVICES` empty. The remedy is
+    the operator's, before a launch: raise the hold file and pause the agents' tests. The operator gates of the
+    2026-11-22 wide-memory diagnostics passed only at attempts 10 (`mem_wide_20261122`) and 23
+    (`mem_wide2_20261122` s2) for this reason;
+  - an agent test touching the device during a stage therefore delays that step by up to the bounded wait, and the
+    delay is logged.
+
+  **Stage 0 timing.** The wait happens BEFORE a run starts: `run_stage0.sh` takes `t0` only after its top guard has
+  passed, so a run never begins while a holder is present and no wait enters a run's timing. The wait (seconds
+  until the passing attempt began; 0 when the first attempt passes) and the guard mode go into the run's summary
+  row (`guard_wait_s`, `guard_mode`). Inside the ABBA block a wait lies in the gap `t1(previous leg) → t0(this leg)`,
+  which the existing `GAP_MAX_S` = 900 s rule (the block's drift tolerance: one leg) already bounds: a gap
+  including a wait above 900 s means FRESH_ABBA_REQUIRED. So the bound on an in-block wait is `GAP_MAX_S` itself,
+  less the normal inter-leg overhead. A wait is never mixed in silently: `stage0_decide.py` v6 reports every leg's
+  wait (`abba_guard_wait_s`) and sets `abba_block_has_guard_wait` iff leg 2, 3 or 4 waited (leg 1's wait comes
+  before the block), and it prints a NOTE naming those legs.
+
+**GPU memory of the full-width collect (addendum 2026-11-22).** The only banked peak at Stage 0's shape is with the
+knob OFF: K=3, C=128, 64 sims, `eval_max_batch_realised` 4096, peak `memory.used` 22,104 MiB in total
+(`~/chess-artifacts/operations/rl-claude-20261119/collect-throughput/logs/sweep.txt`, `mp3_c128_s64_prof`). No
+measurement with the knob ON existed, and a CPU smoke does not measure GPU memory. So the coordinator measured it
+as an operator diagnostic outside this bank, a paired OFF-then-ON collect at Stage 0's exact shape (3 × 128 games,
+64 sims, the arena pin, all processes rc 0, `eval_max_batch_realised` 4096 everywhere):
+`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_20261122/` — `README.md` [`3d00d75f`] (written
+before the run), `RESULT.md` [`0a062442`], `SHA256SUMS` [`d5251224`], `gpu_{off,on}.txt` (1 s samples), and
+per-process stats and logs. Idle was 1,138 MiB before each run.
+- Peak `memory.used`, knob OFF: 20,566 MiB (peak − idle 19,428).
+- Knob ON: **28,320 MiB** (peak − idle 27,182; median 26,454).
+- The knob adds **7,754 MiB** at this shape. The prereg's expectation of "a similar peak" was wrong by 7.8 GB,
+  which is why it had to be measured.
+- Take effect, read from the consumer: `mean_root_prelude_visits` 25.13 / 25.31 / 24.83 with the knob on, absent
+  with it off.
+
+**Rule:** Stage 0 is released only if the knob-ON peak ≤ `memory.total` − 1,024 MiB (31,583 MiB) at the measured
+idle. With the measured +27,182 MiB, that holds for idle ≤ 4,401 MiB: 305 MiB inside at the guard's 4,096 idle cap,
+and 30,564 MiB total at the usual idle of 3,382. PASS, but thin at the cap, and valid only for the topk-16 shape at
+the old pin `fd8c0ce08`. The wide shapes failed at that pin (see the Status), and Addendum 2 registers the post-fix
+memory of every arm at the new pin (the wide arm's peak − idle 8,051 MiB at 3 × 128).
+
+**Per-leg memory check (manual; addendum 2026-11-22).** `run_stage0.sh` already samples `memory.used` every 500 ms
+into `runs/<tag>/logs/gpu.csv` and writes the run's maximum to its summary row as `gpu_mem_max_mib`. Nothing reads it
+automatically. Before reading any Stage 0 block, the operator compares each knob-ON leg's `gpu_mem_max_mib` with
+`memory.total` − 512 MiB. `memory.total` is read once at the release and recorded in the release line's note. A leg
+above that bound voids the block and holds the stage: a spill into shared memory, which on WSL2 slows a run before
+it fails, must not silently contaminate a timed leg. The coordinator makes this check by hand and records it in the
+stage's readout. The automated version (`run_stage0.sh` recording `memory.total`, `stage0_decide.py` refusing with
+`MEMORY_SPILL_HOLD`) is on the next-batch list. (The `gpu_scan.sh` `desc` fix rides Addendum 2.)
+
+**Where the 7.8 GB comes from (read from the code and the logs, not changed).** The collect never uses the 2-group
+eval pipeline, in either arm. It reuses trees, and `gumbel_c.py:1342` turns the pipeline off whenever a persistent
+tree is supplied; all six diagnostic logs print that warning, and only that one. Both arms therefore evaluate all 128
+boards in one call per rep, one leaf per active candidate:
+- **knob OFF:** the widest call is the first halving round, 16 candidates × 128 = 2,048 rows (the banked
+  collect-throughput histogram at this shape has no bucket above 2,048);
+- **knob ON:** round 0 adds about 27 unvisited children × 128 ≈ 3,500 rows, packed first-fit up to the 4,096-row
+  buffer (`_full_width_round0`).
+
+CUDA graphs cover only ≤ 512 rows, so these calls run eager. The caching allocator keeps the eager activation
+high-water mark, about 2.6 GB more per process × 3. A lever not taken: cap round-0 calls at 2,048 rows (about two
+calls per ply instead of one). The −26% rows/s of the drain runs is the extra evaluations themselves: 89 against 64
+evaluations predicts ×0.72 at a constant evaluation rate; the reading is ×0.743, at ×1.03 evaluations per second.
+Stage 0's `S_eq` prices exactly that. In the arena (Stage 2, cold trees) the off seat does pipeline and the knob seat
+does not, but Stage 2 (b) is played at fixed sims, so this changes only the reported timings.
+  - **Measured on the real machine (read-only, 2026-11-22):** `gpu_scan.sh` v2 refused because of another agent's
+    pytest child (`python -u -m chess_anti_engine.uci … --device cpu`), which is why v3 added the CPU-only
+    exemption. The exemption covers the argv clause only. An agent's CPU test that holds `/dev/dxg` is still
+    refused by the device clause, which is the first-guard consequence stated above.
 - **The queue has released the card.** Both markers exist: `rl-run1-followup/chain.exit` and
   `rl-run1-value-anchor/queue2.exit`.
 - **The operator released THIS stage.** The bank holds a file `GPU_RELEASED_BY_OPERATOR` with a line whose first
-  word is the stage the launcher requests (`stage0` … `stage3`), followed by a date, e.g.
-  `stage0 2026-11-22T09:00`.
+  word is the stage the launcher requests (`stage0` … `stage3`), with the measured idle baseline and a date, e.g.
+  `stage0 idle_mib=3382 2026-11-22T09:00`.
   - **Queue order is enforced by that file, which the operator writes. It is never inferred.**
   - The markers cannot do this job. The sibling screen (#1481) runs after queue 2 and has no marker this guard
-    could know about. And between a chain's steps, memory drops below 1 GiB.
+    could know about. And between a chain's steps, memory falls back to idle.
 
 It then takes a non-blocking `flock` on the bank's own `.gpu_launch.lock`; if the lock is held it exits 9. Since
 v6 the exit-9 message also names the case where no launcher is running: a child of a SIGKILLed launcher
@@ -230,8 +472,35 @@ All three now resume by the same rules, and every decision is appended to `resum
   | Arena seat (stages 2 and 3) | seat, seed, n, both models' shas (stage 2: its seat arguments, i.e. sims and knob, plus the SL base), the opening file's sha, the arena commit or PIN, the match launcher's sha, the environment | `seat_state.py` v3 DONE (below) |
   | Stage 0 run | `s0_inputs`: the run's sims and knob, plus the shas of `run_stage0.sh` (its constants, seeds, `ARENA_SHA`), `count_wrap.py`, `steady_rate.py`, `stage0_decide.py`, the SL base, the pilot bank's sums, the environment | a row in `summary.jsonl` |
 
-  "The environment" is `env | grep -E '^(CAE_|CUDA_|PYTORCH_|TORCH|OMP_|CHESS_)' | sort` as one line (`envf` in
-  `launch_lib.sh`): production code reads `CAE_COMPILED_LEGAL_POLICY` and others from the environment.
+  "The environment" (addendum, `launch_lib.sh` v4 `envf`) is the variables production code actually READS on these
+  paths, as one sorted line of shell-quoted `KEY=value` words. v3 fingerprinted whole prefixes (`CUDA_`, `PYTORCH_`,
+  `TORCH`, `OMP_`), so `OMP_NUM_THREADS=3` on a relaunch blocked a whole Stage 3 resume although nothing on these
+  paths reads it, and for Stage 0 the printed remedy threw away a valid run and tripped FRESH_ABBA_REQUIRED. The set,
+  from `git grep` for `os.environ` / `getenv` at `ARENA_SHA` `fd8c0ce08` and PIN `0c795fb7a` (no `getenv` in C):
+  - every `CAE_*`, `CHESS_*` and `DEEPFIN_*` name: the families the repo uses for its own knobs, e.g.
+    `CAE_COMPILED_LEGAL_POLICY` / `CAE_COMPILED_LEGAL_ROWS_POLICY` (`chess_anti_engine/inference.py:191`, `:200`),
+    `CAE_DUP_STATS` (`mcts/gumbel_c.py:113`), `CAE_BUCKET_HIST` (`inference.py:1526`), `CAE_ARRIVAL_TRACE`
+    (`inference.py:1581`), `CAE_NEURAL_WORK` (`inference.py:2572`), `CAE_INFERENCE_COMPILE`
+    (`tune/distributed_runtime.py:1207`; `:1206` at the PIN), `CAE_HEAP_CENSUS_SECONDS` (`heap_census.py:66`),
+    `CAE_SYZYGY_PATH` (`utils/syzygy.py:46`), `CAE_STOCKFISH` (`utils/engine_discovery.py:41`),
+    `CAE_RESEARCH_COMPILE_CACHE_DIR` (`scripts/arena_standard.py:2044`; `:2025` at the PIN), `CHESS_LOG_LEVEL`
+    (`tune/trainable.py:106`), `CHESS_ANTI_ENGINE_LIVE_CONFIG` (`eval/production_shape.py:66`),
+    `CHESS_LIVE_PRODUCTION_CONFIG` (`eval/lc0_control_arch.py:122`);
+  - `CUDA_VISIBLE_DEVICES` (`simple_rl/collect.py:582`) and `CUDA_DEVICE_ORDER` (`simple_rl/collect.py:618`; the
+    PIN does not read it);
+  - `CUBLAS_WORKSPACE_CONFIG` and `PYTHONHASHSEED`, which the arena's own durable record names as run identity
+    (`eval/arena_durable.py:64`): cuBLAS determinism and hash order.
+
+  The full prefix set (`CAE_`, `CHESS_`, `DEEPFIN_`, `CUDA_`, `CUBLAS_`, `PYTORCH_`, `TORCH`, `TRITON_`, `OMP_`,
+  `MKL_`, `OPENBLAS_`, `PYTHON`, `LD_`) is written, report-only and never compared, to an `env.observed` file beside
+  every step's `.inputs` (stage 3 `<step>.env.observed`, each seat's `<label>.env.observed`, each stage-0 run's
+  `env.observed`), so a behaviour difference can still be diagnosed. `clear_step.sh` moves it with its step.
+
+  **An environment difference now says what differs and how to restore it.** Every 87 refusal prints each
+  fingerprinted variable that differs (`KEY: recorded=<value|unset>  now=<value|unset>`) and the lines that restore
+  the recorded environment (`export KEY=…` / `unset KEY`). If nothing but the environment differs it says so:
+  restore and relaunch, never clear. For a stage-0 row that matters most: a clear discards a valid run, and a
+  cleared ABBA leg forces a fresh block.
 
   **A step's completion check covers what it CONSUMED, not only what it wrote** (new in this revision). The review
   reproduced the defect without this: collect GEN-A and a cell are sealed; the collect is cleared and redone as
@@ -278,7 +547,7 @@ All three now resume by the same rules, and every decision is appended to `resum
   silently rerun or blended with a rerun. The refusal prints the one documented recovery command,
   `clear_step.sh` v3 (sha in the table below; v2 `dd07013a9641…`, v1 `4ace011c377f…`):
   - the forms are `stage3 <step> [--finished] [--cascade a,b]`, `stage0 <tag> [--finished]`, `stage0-block
-    [--finished]` (summary, runs and decision: a fresh ABBA block), `seat <arena_dir> <label>`, and (v3)
+    [--finished]` (summary, runs, decision and both series files: a fresh ABBA block), `seat <arena_dir> <label>`, and (v3)
     `stage3-fingerprint` (above).
   - **Names are validated, never used as paths.** A stage-3 step must be one of the five registered names. A tag
     must look like `r01_off64`. A label is `[A-Za-z0-9_.-]+`, and not `.` or `..`. A seat's arena directory must
@@ -327,28 +596,136 @@ All three now resume by the same rules, and every decision is appended to `resum
     leaves a `.started` without an `.exit`. The step must then be cleared and rerun, which costs that step but never
     blends it.
 
-New shas (previous versions kept as `.vN`):
+Shas (addendum 2026-11-22). Every row is a citation in the evidence verifier's stamp form (prefix `RFW/`, declared
+in the evidence log's prefix table), so drift is machine-checked: `CUDA_VISIBLE_DEVICES= python3
+scripts/verify_evidence_stamps.py --quiet docs/experiments/2026-11-21-rl-run1-root-full-width.md` must exit 0.
 
-| Script | New sha | Previous sha |
+| File | Current version | Previous versions (each kept as `.vN`) |
 |---|---|---|
-| `stage0/run_stage0.sh` v7 | `4f851a9c9c4f…` | v6 `8aafea169066…`, v5 `eb1dd4d3163b…`, v4 `205bd4f0db30…`, v3 `d0e3bcb6952b…` |
-| `stage0/run_stage0_all.sh` v5 | `5163ea29e2cb…` | v4 `09c9eea07472…`, v3 `0d9a81de48f5…`, v2 `98a9bea18970…`, v1 `51482410ec7c…` |
-| `stage0/stage0_decide.py` v5 | `cf5e1cbb397f…` | v4 `f61952c2b32a…`, v3 `4771354e2117…` |
-| `stage1/run_stage1.sh` v5 | `b419265e881d…` | v4 `b9ab2fae46ed…`, v3 `0539b8e1e4f4…`, v2 `3778d06ddad6…` |
-| `run_rfw_match.sh` v5 | `e8e85a601c32…` | v4 `91ef5a8f87ed…`, v3 `b24a435b24e5…`, v2 `0487d857e379…` |
-| `stage2/run_stage2.sh` v7 | `a9d05768c5c9…` | v6 `d6839c0ca884…`, v5 `e831f6274f47…`, v4 `174495f8c6eb…`, v3 `ba70d73eb7b7…`, v2 `c07fe428aa39…` |
-| `stage3/launch_stage3.sh` v7 | `2880311d902c…` | v6 `86494309a5f5…`, v5 `b4a0cf0e46f8…`, v4 `f5ea61297307…`, v3 `8bfe478f0db8…`, v2 `a519b39f2200…` |
-| `launch_lib.sh` v3 | `b9723e9355cc…` | v2 `218d215dd305…`, v1 `9bae510f71b0…` |
-| `seat_state.py` v3 | `15022d1b3aa5…` | v2 `730a1c958edf…`, v1 `1577deaa9a97…` |
-| `clear_step.sh` v3 | `e2df58427ed4…` | v2 `dd07013a9641…`, v1 `4ace011c377f…` |
-| `stage0/fab_test/run_fab.py` v2 | `3abfd33405ac…` | v1 `93e32555a306…` |
-| `verify_outputs.py` (new) | `50ca4fa4b77c…` | — |
-| `guard_test/run_mutants_v9.py` (new) | `f6cca534998a…` | — |
+| `RFW/gpu_guard.sh` [`a65fccd310ca`] | v8 | `RFW/gpu_guard.sh.v7` [`4324d33990f6`], `RFW/gpu_guard.sh.v6` [`c8697d517544`], `RFW/gpu_guard.sh.v5` [`30d2226f6a78`], `RFW/gpu_guard.sh.v4` [`b3ffd88cf5f7`], `RFW/gpu_guard.sh.v3` [`ee073f841a24`], `RFW/gpu_guard.sh.v2` [`997969c87bf3`], `RFW/gpu_guard.sh.v1` [`a0a2f869a719`] |
+| `RFW/launch_lib.sh` [`12e1a1c18eb3`] | v5 | `RFW/launch_lib.sh.v4` [`bbdcdb37ed6e`], `RFW/launch_lib.sh.v3` [`b9723e9355cc`], `RFW/launch_lib.sh.v2` [`218d215dd305`], `RFW/launch_lib.sh.v1` [`9bae510f71b0`] |
+| `RFW/seat_state.py` [`15022d1b3aa5`] | v3 | `RFW/seat_state.py.v2` [`730a1c958edf`], `RFW/seat_state.py.v1` [`1577deaa9a97`] |
+| `RFW/clear_step.sh` [`e6a3f324e61e`] | v4 | `RFW/clear_step.sh.v3` [`e2df58427ed4`], `RFW/clear_step.sh.v2` [`dd07013a9641`], `RFW/clear_step.sh.v1` [`4ace011c377f`] |
+| `RFW/verify_outputs.py` [`50ca4fa4b77c`] | v1 | — |
+| `RFW/stage0/run_stage0.sh` [`69faf7ac40a6`] | v9 | `RFW/stage0/run_stage0.sh.v8` [`7d4ff2022a2d`], `RFW/stage0/run_stage0.sh.v7` [`4f851a9c9c4f`], `RFW/stage0/run_stage0.sh.v6` [`8aafea169066`], `RFW/stage0/run_stage0.sh.v5` [`eb1dd4d3163b`], `RFW/stage0/run_stage0.sh.v4` [`205bd4f0db30`], `RFW/stage0/run_stage0.sh.v3` [`d0e3bcb6952b`], `RFW/stage0/run_stage0.sh.v2` [`39303c3d7620`], `RFW/stage0/run_stage0.sh.v1` [`a84f4c7cfa63`] |
+| `RFW/stage0/run_stage0_all.sh` [`89a04df9ae8f`] | v6 | `RFW/stage0/run_stage0_all.sh.v5` [`5163ea29e2cb`], `RFW/stage0/run_stage0_all.sh.v4` [`09c9eea07472`], `RFW/stage0/run_stage0_all.sh.v3` [`0d9a81de48f5`], `RFW/stage0/run_stage0_all.sh.v2` [`98a9bea18970`], `RFW/stage0/run_stage0_all.sh.v1` [`51482410ec7c`] |
+| `RFW/stage0/stage0_decide.py` [`ff08b661fa46`] | v7 | `RFW/stage0/stage0_decide.py.v6` [`d2ae12874881`], `RFW/stage0/stage0_decide.py.v5` [`cf5e1cbb397f`], `RFW/stage0/stage0_decide.py.v4` [`f61952c2b32a`], `RFW/stage0/stage0_decide.py.v3` [`4771354e2117`], `RFW/stage0/stage0_decide.py.v2` [`4c02fc7565dd`], `RFW/stage0/stage0_decide.py.v1` [`fb099bed9a35`] |
+| `RFW/stage0/fab_test/run_fab.py` [`8068235ca3d1`] | v4 | `RFW/stage0/fab_test/run_fab.py.v3` [`5360bc2ceb99`], `RFW/stage0/fab_test/run_fab.py.v2` [`3abfd33405ac`], `RFW/stage0/fab_test/run_fab.py.v1` [`93e32555a306`] |
+| `RFW/stage1/run_stage1.sh` [`61c66b9da915`] | v6 | `RFW/stage1/run_stage1.sh.v5` [`b419265e881d`], `RFW/stage1/run_stage1.sh.v4` [`b9ab2fae46ed`], `RFW/stage1/run_stage1.sh.v3` [`0539b8e1e4f4`], `RFW/stage1/run_stage1.sh.v2` [`3778d06ddad6`], `RFW/stage1/run_stage1.sh.v1` [`d83c8601b3a4`] |
+| `RFW/run_rfw_match.sh` [`73340cd07d91`] | v7 | `RFW/run_rfw_match.sh.v6` [`29aedb0040c9`], `RFW/run_rfw_match.sh.v5` [`e8e85a601c32`], `RFW/run_rfw_match.sh.v4` [`91ef5a8f87ed`], `RFW/run_rfw_match.sh.v3` [`b24a435b24e5`], `RFW/run_rfw_match.sh.v2` [`0487d857e379`], `RFW/run_rfw_match.sh.v1` [`0c192e052082`] |
+| `RFW/stage2/run_stage2.sh` [`e38254f18e38`] | v9 | `RFW/stage2/run_stage2.sh.v8` [`49c17f057987`], `RFW/stage2/run_stage2.sh.v7` [`a9d05768c5c9`], `RFW/stage2/run_stage2.sh.v6` [`d6839c0ca884`], `RFW/stage2/run_stage2.sh.v5` [`e831f6274f47`], `RFW/stage2/run_stage2.sh.v4` [`174495f8c6eb`], `RFW/stage2/run_stage2.sh.v3` [`ba70d73eb7b7`], `RFW/stage2/run_stage2.sh.v2` [`c07fe428aa39`], `RFW/stage2/run_stage2.sh.v1` [`5ba517c5ae0e`] |
+| `RFW/stage3/launch_stage3.sh` [`4efa17765d61`] | v9 | `RFW/stage3/launch_stage3.sh.v8` [`f154bdbe7bda`], `RFW/stage3/launch_stage3.sh.v7` [`2880311d902c`], `RFW/stage3/launch_stage3.sh.v6` [`86494309a5f5`], `RFW/stage3/launch_stage3.sh.v5` [`b4a0cf0e46f8`], `RFW/stage3/launch_stage3.sh.v4` [`f5ea61297307`], `RFW/stage3/launch_stage3.sh.v3` [`8bfe478f0db8`], `RFW/stage3/launch_stage3.sh.v2` [`a519b39f2200`], `RFW/stage3/launch_stage3.sh.v1` [`95c8a66dbc59`] |
+| `RFW/gpu_scan.sh` [`b8197e6e9ca6`] | v6 | `RFW/gpu_scan.sh.v5` [`8b4261b0a653`], `RFW/gpu_scan.sh.v4` [`949408e727e7`], `RFW/gpu_scan.sh.v3` [`23a504a858bc`], `RFW/gpu_scan.sh.v2` [`38c6db9bbf69`], `RFW/gpu_scan.sh.v1` [`ec611f4b3a5d`] |
+| `RFW/check_shape.py` [`b615f28e9cab`] | v2 | `RFW/check_shape.py.v1` [`95ee428f58f9`] |
+| `RFW/stage1/stage1_search.py` [`63a06c5e250c`] | v2 | `RFW/stage1/stage1_search.py.v1` [`b928707dee79`] |
+| `RFW/guard_test/guard_test.sh` [`f2f3fdd85b1d`] | v15 | `RFW/guard_test/guard_test.sh.v14` [`9bceb5be1c9b`], `RFW/guard_test/guard_test.sh.v13` [`cb01663fa9f9`], `RFW/guard_test/guard_test.sh.v12` [`fe6ecc0ee08b`], `RFW/guard_test/guard_test.sh.v11` [`83a3b679efe0`], `RFW/guard_test/guard_test.sh.v10` [`78d1b3f40d22`], `RFW/guard_test/guard_test.sh.v9` [`167b79eeee93`], `RFW/guard_test/guard_test.sh.v8` [`c835c5280f1c`], `RFW/guard_test/guard_test.sh.v7` [`ac4196580a48`], `RFW/guard_test/guard_test.sh.v6` [`275c91d526df`], `RFW/guard_test/guard_test.sh.v5` [`d9b84ec2eba5`], `RFW/guard_test/guard_test.sh.v4` [`d4ad57efc6f3`], `RFW/guard_test/guard_test.sh.v3` [`b40b08d3d30c`], `RFW/guard_test/guard_test.sh.v2` [`730d515388e3`], `RFW/guard_test/guard_test.sh.v1` [`621a57547b22`] |
+| `RFW/guard_test/run_mutants_v11.py` [`d3136aea234f`] | v1 | — |
+| `RFW/guard_test/run_mutants_v12.py` [`d1bcefa298f3`] | v4 | `RFW/guard_test/run_mutants_v12.py.v3` [`39cf955c554b`], `RFW/guard_test/run_mutants_v12.py.v2` [`73689fcd2730`], `RFW/guard_test/run_mutants_v12.py.v1` [`3dc18b9b659b`] |
+| `RFW/addendum2/repin.py` [`7f9aa9f66f98`] | v2 | `RFW/addendum2/repin.py.v1` [`32fb348028cc`] |
+| `RFW/addendum2/operator_repin.sh` [`78670913dedc`] | v3 | `RFW/addendum2/operator_repin.sh.v2` [`10c04aef0ba3`], `RFW/addendum2/operator_repin.sh.v1` [`f7f81f66df2d`] |
+| `RFW/addendum2/bank_swap.sh` [`1069ede7ab74`] | v1 | — |
+| `RFW/SHA256SUMS` [`3b328898d389`] | v6 | `RFW/SHA256SUMS.v5` [`1bd3bec3f25f`], `RFW/SHA256SUMS.v4` [`5ebf76b14621`], `RFW/SHA256SUMS.v3` [`5905c14b95f4`], `RFW/SHA256SUMS.v2` [`5816a4677421`], `RFW/SHA256SUMS.v1` [`ac86aa6cbfe9`] |
 
-The table has 13 rows. The bank's `SHA256SUMS` (85 entries, `5905c14b95f4…`; the previous 75-entry file is kept as
-`SHA256SUMS.v2`) passes `sha256sum -c`.
+**Addendum changes beyond the guard (2026-11-22):**
+- **Stage-0 series files.** `clear_step.sh stage0-block` now moves `decision.series.json` and
+  `decision.fresh_abba.series.json` too (v9 left the series behind, and the next decide refused with no clear form).
+  When FRESH_ABBA_REQUIRED fires, `stage0_decide.py` banks the discarded block's series as
+  `decision.fresh_abba.series.json` (written once, never overwritten), so a discarded block still feeds the
+  re-derivation of the 900 s threshold. `gpu.csv` samples now carry the sampler's own timestamp (`run_stage0.sh` v8
+  queries `timestamp,utilization.gpu,memory.used`); v7 placed sample i at t0 + 0.5 i, but the sampler starts about
+  1 s before t0, so the whole curve was shifted. `decision.series.json` says which placement each run used
+  (`gpu_t_source`: `sampler`, or `t0+0.5i` for rows without timestamps).
+- **One aborted directory per stage-0 `--finished` clear** (v3 made two: one for the old summary, one for the run).
+- **`verify_outputs.py` is pinned to the repo's digest by a test.** The guard test writes a stage with nested
+  shard files in the fake HOME, has the repo's own `write_manifest` (the arena worktree at `ARENA_SHA`, imported
+  read-only by the venv interpreter with CUDA hidden) seal it, and requires `verify_outputs.py` to verify it (0),
+  then to refuse one changed shard byte (1). The reviewer's surviving mutant (the digest omits the relative file
+  names) is now killed (M46).
 
-**Tested** (`guard_test/guard_test.sh` v9 `167b79eeee93…`, output `guard_test/guard_test.txt`; v8 `c835c5280f1c…`, v1 `621a57547b22…`,
+**Tested** (`guard_test/guard_test.sh` v11, run on the staging copy; output `guard_test/guard_test.txt`; v10 with
+its output `guard_test.v10.txt`, and v9 with `guard_test.v9.txt`, kept). All 191 checks pass. The whole test runs in its own user + pid namespace: a fresh `/proc` (the scan sees only
+the test's own processes, never another agent's runs); `/dev/full` (a real character device, rdev 1:7) bind-mounted
+over `/dev/dxg`, so no case can open the real node (a:102) while the scan's rdev match is still exercised; every
+capability dropped for good; SIGINT / SIGQUIT / SIGTERM reset to default (`unshare` leaves them ignored in its child).
+The harness asserts each of these before any case runs. It waits, before starting, while the coordinator's
+`GPU_CHECK_HOLD` file exists (see the harness rule above). Every case whose expected result depends on the argv
+clause reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the CPU-only exemption would
+apply; only the exemption cases themselves expect it. New cases:
+- the idle-baseline rule: no `idle_mib` → 8; `idle_mib` 5000 → 8; idle + 600 → 8; idle − 600 → 8; idle + 100 with
+  utilisation 0 → passes; idle + 512 exactly → passes; one utilisation sample of 35% in five → 8; at most 9% →
+  passes; utilisation `N/A` or nothing → 11; two GPU lines, `0` and `N/A` → 11 (a non-integer line is never
+  skipped); `RFW_MEM_WAIT_S` waits through idle + 600 twice, then passes;
+- the REAL `nvidia-smi` (read-only, before the namespace): both probe commands print integers and exit 0;
+- the scan (v5): 23 argv unit cases (python short-option clusters `-um` / `-bm` / `-uB` / `-Wignore` / `-W x` /
+  `-X dev` / `-mmod`; `deepfin` as argv[0] and as `python …/deepfin`; `bash --norc` / `-O x` / `+O x` / `-o x` /
+  `--rcfile x`; `dotnet exec --depsfile x`; and, unmatched, `-uc '…'`, `-c '… # …/arena_standard.py'`, `bash -lc`,
+  `python -`, and the stated limits `-m cProfile` and runpy via `-c`); an enumeration that sees no process of this
+  user → refused; a lister error list mixing ENOENT with EACCES → refused; a real single-argument device holder
+  (argv `['cat']`) and a holder whose cmdline reads empty → refused by the device clause; a LISTED parent launcher
+  (not exempt) starting a guarded child → the child passes (ancestors excluded);
+- the scan (v4 and earlier): listed scripts under `python3 -u`, `python3 -I -X dev`, `python3 -m chess_anti_engine…`, `lc0` as
+  argv[0], `dotnet Ceres.dll`, `count_wrap.py`, a sibling copy of a bank launcher → each refused (all started
+  WITHOUT `CUDA_VISIBLE_DEVICES`); a name only as a substring, `bash -c '…sha256sum …/arena_standard.py'`, and
+  `python3 -c '…' …/arena_standard.py` → each passes; a foreign holder of the device → refused; a holder of the same
+  device through another path (`/dev/full`) → refused; a process holding a REGULAR file named `/dev/dxg` in its own
+  mount namespace → NOTE, passes; the scanner's own `/dev/dxg` missing or not a character device → refused; a
+  non-dumpable device holder (access says yes, readlink denied) → refused; `/usr/bin/ssh-agent` / `/usr/bin/gpg-agent` (non-dumpable) → NOTE, passes; the same process as plain
+  `ssh-agent` → refused; three race cases with an interposed lister (ENOENT → skipped; Permission denied → refused;
+  no error text → refused); a launcher's own re-check beside its own running child → passes, while a sibling copy
+  started from the same shell line → refused;
+- the CPU-only exemption: a matched script started with `CUDA_VISIBLE_DEVICES=` (empty) → NOTE, passes; with `=0`,
+  with only `CUDA_VISIBLE_DEVICES_X=` or `XCUDA_VISIBLE_DEVICES=`, or with two entries (`=` then `=0`) → refused; an
+  exempt matched process that holds the device → refused (the exemption is argv-only); an environ that cannot be
+  read (interposed reader) → refused, with the real reader as control → exempt;
+- the environment: `CAE_COMPILED_LEGAL_POLICY=1` on a Stage 3 relaunch → 87 naming it, with the `unset` line and the
+  ONLY-env verdict; `OMP_NUM_THREADS=3`, `TORCH_LOGS`, `PYTORCH_CUDA_ALLOC_CONF` → not refused, every step and seat
+  skipped; the fingerprint holds no `OMP_` name and each step's `env.observed` exists; a stage-0 row differing only
+  by `CAE_DUP_STATS` → 87 naming it, "Do NOT clear"; a row whose SL base changed → no ONLY-env verdict;
+- series and clears: `stage0-block --finished` moves the decision and both series files; a stage-0 `--finished`
+  clear leaves one aborted directory; `run_stage0.sh` writes 3-field `gpu.csv` rows and an `env.observed`;
+- `verify_outputs.py` against the repo's own `write_manifest` (0), and after one changed shard byte (1);
+- the between-step re-guard (`guard_retry`, against a stub guard): a holder gone after 10 s → proceeds, with the
+  reason logged once; a persistent holder with `RFW_REGUARD_WAIT_S=12` → refused at the deadline, with a deadline
+  line; a revoked release → refused at once (bounded at `RFW_REGUARD_WAIT_S=12`, so a mutant that retries it is
+  caught in seconds rather than hanging the harness); `RFW_REGUARD_WAIT_S=abc` → 12; only the memory probe failing → 11;
+- the nested top guard (a second fake bank: the real `launch_lib.sh` / `gpu_guard.sh` / `gpu_scan.sh`, the real top
+  of `run_stage0.sh`, a minimal parent at the registered path, and a holder appended to that bank's scan copy): a
+  nested child plus a holder that goes away → proceeds after the wait, reason and "passed after" logged; plus a
+  persistent holder → refused at the deadline; a direct start plus a holder → single-shot refusal at once; four
+  forgeries → single-shot refusal at once (a hand-set marker, an unregistered parent script, the lock fd closed, a
+  grandchild whose PPID differs); a no-holder control → nested with a 0 s wait. The real `run_stage0_all.sh` and
+  `run_stage2.sh` runs through stubs assert that every child ran its top guard nested (0 s wait), and the stage-0
+  rows carry `"guard_mode": "nested", "guard_wait_s": 0`.
+
+`stage0/fab_test/run_fab.py` v3: 17 cases, 0 WRONG (new: FRESH_ABBA_REQUIRED banks the discarded block's series and
+writes no decision; `gpu.csv` placed by the sampler's own timestamps, the first sample 1.25 s before t0; guard waits
+reported per leg, with the in-block flag set only for legs 2–4).
+
+**Mutants v11** (`guard_test/run_mutants_v11.py`). Each mutant edits a fresh copy of the staging bank, and
+`guard_test.sh` runs against the copy, 4 at a time. The runner asserts the expected count (`--expect N`) and exits
+non-zero unless the control survives with 0 WRONG and every other mutant is CAUGHT: a survivor, a mutant that does
+not apply, a run without a total line, or a timeout all fail it.
+- **Scan series** (M0 + G1–G33, on `gpu_scan.sh` v5): every G mutant CAUGHT. Two needed a harness fix first, and
+  each fix was rerun solo with the control: G19 (rdev compared by its major number only) first aborted the harness on
+  an unbound variable when it read a hang pid; the read is now guarded, and G19 is CAUGHT with 27 WRONG. G32 (`-c`
+  inside a cluster does not end the scan) first survived, because no case ended the command string with a listed
+  path; two such cases were added, and G32 is CAUGHT with 2 WRONG. G10, G11 and G33 are each killed by their own
+  case, not only by a neighbour's.
+- **M-series** (M1–M68; M5 and M9 retired): `MUTANTS RAN=67 EXPECTED=67`. 63 CAUGHT in the series; three were not:
+  - M3 (`run_stage0.sh` without its guard prologue) survived, because its pattern still named the guard line that
+    the restructure moved into `rfw_top_guard`. It was retargeted to replace `rfw_top_guard` with the single-shot
+    guard: CAUGHT, 20 WRONG.
+  - M54 (a non-integer utilisation line skipped: fails open) survived, because no case printed an integer line
+    beside a non-integer one. v11 adds that case: CAUGHT, 1 WRONG.
+  - M57 (a revoked release line retried) timed out. The revoked-release case ran at the default 900 s retry,
+    which the mutant spent in full. v11 bounds that case at 12 s: CAUGHT, 5 WRONG.
+  The harness gained those two cases mid-series. Both are additive (a new case cannot un-catch a mutant), and M0,
+  M3, M54 and M57 were rerun solo on the final v11: `MUTANTS RAN=4 EXPECTED=4 NOT_OK=0`, control 191/191.
+  Outputs: `guard_test/guard_mutants_v11_scan_v5.txt`, `…_G19_v5.txt`, `…_G32_v5.txt`,
+  `…_mseries_final.txt`, `…_rerun4.txt`.
+
+
+**Tested, previous round** (`guard_test/guard_test.sh` v9 `167b79eeee93…`, output `guard_test/guard_test.v9.txt`; v8 `c835c5280f1c…`, v1 `621a57547b22…`,
 v2 `730d515388e3…`, v3 `b40b08d3d30c…`, v4 `d4ad57efc6f3…`, v5 `d9b84ec2eba5…`, v6 `275c91d526df…` and v7
 `ac4196580a48…`, with their outputs, are kept as `.v1` … `.v8`). Since v6 the test **exits non-zero if any case is WRONG**. v5 exited 0 even with WRONG lines, so a
 mutant harness must key on the exit code.
@@ -861,7 +1238,7 @@ the knob seat loses the pipeline and evaluates more: (a) ≈ +46% at the root, (
 - Estimate: ≈ 1.6–1.9 GPU-h per match, ≈ 3.0–3.6 GPU-h with the smokes.
 - The arena's own timings are reported.
 
-## Stage 3 — the training test (NOT AUTHORISED; needs the owner's go)
+## Stage 3 — the training test (authorised by the owner's standing statement of 2026-11-22; launched only after Stages 0–2 pass and are read)
 
 **One command:** `stage3/launch_stage3.sh` (v7 `2880311d902c…`; v1 `95c8a66dbc59…`; history in the GPU guard section).
 - It refuses without `stage3/OWNER_GO` (exit 90, tested), a Stage 1 PROCEED, Stage 2 (b) UB95 ≥ −10, Stage 2's
@@ -927,6 +1304,297 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
 - Against the 1,600-game Zq gate the difference SE is ≈ 7.5, so detectable at 80% is ≈ 21 Elo.
 - **Promise:** "the knob helps training" only if `P0_rfw` − banked P0 has LB95 > 0. A true effect below ≈ 13 Elo is
   likely to read as unread. Nothing smaller is claimed.
+
+## Addendum 2 (2026-11-22): the re-pin to forward chunking, and the wide arm replaces the topk-16 arm
+
+**Status.** This addendum is an amendment made before any data. No stage of this record has run. It does two things:
+- **The re-pin.** Every stage moves to the pin `0d4d11572275095f883f22df17d5b7f25683e41b`.
+- **The arm.** The registered full-width arm becomes the WIDE arm, `fw_wide`, replacing B (`--root-full-width
+  --topk 16`):
+  - B is registered and withdrawn before any data. Its measured numbers stay in this record: 28,320 MiB peak with the
+    knob on at `fd8c0ce08`, and 9,848 MiB post-fix.
+  - `fw_wide` differs from B only in `--topk`, which follows the realised-width rule below.
+  - Every collect also runs `--eval-chunk-rows 512`, with the realised-field gates below.
+  - Everything else is unchanged: the control (knob off, topk 16, 64 sims), the stages, `S_eq`'s formula, every
+    tolerance and every kill (Stage 1's LB95 > 0 and > +1.2 cp; Stage 2's UB95 < −10 Elo). All now apply to
+    `fw_wide`.
+  - Wherever the stages above say "knob on", `--root-full-width`, `MSEQon` or `M64on`, the arm is `fw_wide`.
+  - The Stage 1 arm tags `M64on` / `MSEQon` and the Stage 2 match names `rfw_matched` / `rfw_eqtime` are kept, so the
+    sealed scorer and pool code do not change. Every one of those runs records its realised topk (`<tag>__topk` in
+    the Stage 1 bank; the seat's realised `gumbel.topk`, checked by `check_shape.py`).
+
+**Names.** The sealed scorer, pool and match code keep their tags. Each of these now means `fw_wide`, at the topk the
+rule gives for its sims:
+
+| Name in files and logs | Meaning after Addendum 2 | Realised topk recorded as |
+|---|---|---|
+| Stage 0 rows with `knob: on` | `fw_wide` at the row's sims | the row's `topk` |
+| Stage 1 `M64on` | `fw_wide` at 64 sims (topk 32) | `M64on__topk` in the Stage 1 bank |
+| Stage 1 `MSEQon` | `fw_wide` at `S_eq` | `MSEQon__topk` |
+| Stage 2 `rfw_matched`, `rfw_eqtime` (knob seat) | `fw_wide` at 64 / `S_eq` against off at 64 | the seat's `gumbel.topk`, checked by `check_shape.py` |
+| Stage 3 `*_rfw` cells and seats | trained on the `fw_wide` collect at `S_eq` | the collect's `eval_max_batch_realised` = 256 × topk |
+
+**Why the wide arm replaces B rather than joining it:**
+1. **No stage has run,** so this is an amendment before any data.
+2. **The two pre-registered scoping banks answer the B-or-wide design question at equal leaf cost** (below):
+   - children visited at least twice: wide 21.4 against B 13.8, of 23.8 legal moves;
+   - ordering over all children: +0.098 / +0.090 / +0.081 against equal-leaf knob-off controls;
+   - widening does not weaken the deep children.
+3. **The post-fix measurement shows the same cost.** Peak − idle is 8,051 MiB for wide and 7,679 for B. Rows/s are
+   within 3% (100.6 vs 103.8; single runs).
+4. **B was only ever a fallback.** The record never had a B-vs-wide match, so B served only as "else B if B
+   survives". A fallback that costs a second Stage 0 / 1 / 2 block, an arm-choice rule and several hours of launcher
+   code is not worth its GPU-hours.
+5. **The owner asked for all, or most, root children with 2–3 visits each.** That is the wide arm.
+
+**What is lost, stated plainly:**
+- There is no direct strength comparison of topk 16 against wide under the knob.
+- If `fw_wide` is killed at Stage 1 or Stage 2, the record STOPS. There is no fallback arm, and a topk-16 arm would
+  need a new record.
+
+### The pin, and why it moved
+
+**Memory follows the largest forward, not the reservation.** At pin `fd8c0ce08`, the wide arm could not run at the collect's
+3 × 128 shape:
+- `--topk 64` was refused by `check_vram`, which sized from the 16,384-row reservation
+  (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide_20261122/RESULT.md` [`1c0ba196`]).
+- `--topk 32 --sims 64` and `--topk 21 --sims 41` both reached the card ceiling within 30 s, at 31,865 and 31,826 MiB
+  (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide2_20261122/RESULT.md` [`f36a10c5`]).
+  Round 0's calls of about 5,000 rows each went through as one eager forward per process.
+
+**The fix is PR #1511, merged as `0d4d11572275095f883f22df17d5b7f25683e41b`.** It bounds every collect forward at `--eval-chunk-rows` rows, default
+512, the CUDA-graph row cap. A larger call runs as consecutive forwards of at most that many rows, so every chunk
+replays a captured graph. Every stage of this record now runs at `0d4d11572275095f883f22df17d5b7f25683e41b`, B included.
+
+**Why #1511's merge commit, not a later main.** The bank was re-pinned on 2026-11-25, when main had moved to
+`27206434a`. The commits after `0d4d11572275095f883f22df17d5b7f25683e41b` (#1515, #1516) change docs and `chess_anti_engine/simple_rl/learn.py` /
+`sibling.py` only. The `learn.py` change moves the sibling term's construction into `build_sibling_term`, reached
+only when `w_sibling > 0`; every training cell here runs `--w-sibling 0` and never imports `sibling.py`. So the
+collect, match and training paths the bank runs are the same at both commits, and the pin stays the one
+`addendum2/operator_repin.sh` derives mechanically from the PR (log `addendum2/operator_repin.log`,
+`OPERATOR_REPIN_OK 2026-11-25T19:09:04-05:00`; six extensions built with GNU build-ids, four imports checked to load
+from the arena worktree).
+
+The bank enforced the hold until this re-pin: `HOLD_REPIN`, with guard v8 refusing exit 14 (see the Status and
+[the GPU guard](#the-gpu-guard)). The bank revision that carries this addendum ships WITHOUT the marker, because the
+re-pin is in it. The mechanism and its harness cases stay.
+
+**Post-fix memory and rate**, at 3 × 128 games, 64 sims and N = 512
+(`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/chunk_meas_20261122/`):
+- Bank files: `README.md` [`ff0f38d5`], `ADDENDUM_1.md` [`00fc377c`], `SHA256SUMS` [`91109598`].
+- These collects ran at the PR head `1e3a537f6`. Its forward path is the merged one; later heads changed tests, the
+  CPU-only async entries, and the `--eval-chunk-rows` cap.
+
+| arm | topk | peak MiB (idle) | peak − idle | whole-run rows / active s | `eval_chunk_rows_realised` | flushes |
+|---|---|---|---|---|---|---|
+| off | 16 | 10,012 (2,145) | 7,867 | 137.1 | 512 | 0 |
+| B | 16 | 9,848 (2,169) | 7,679 | 103.8 | 512 | 0 |
+| C | 32 | 10,208 (2,157) | 8,051 | 100.6 | 512 | 0 |
+
+- **Memory.** Against the same shape at `fd8c0ce08` (`../mem_20261122/`), per-process memory fell 2.5× for off and
+  3.5× for B. The wide arm (row C) fits with about 21 GB to spare.
+- **Rate.** The rates are single runs of whole-run rows per active second, not Stage 0's steady rate. They support
+  "chunking is not slower" (+5.5% off, +7.5% B against the old pin) and nothing more. Stage 0 measures cost by its
+  registered method.
+
+**The registered shape is the measured one: 3 × 128 at N = 512, for every arm and every stage.** Nothing in this
+addendum depends on a measurement not in hand.
+
+**Optional pre-stage diagnostic (not required, not run yet).** The comparison is N ∈ {1024, 2048} against 512, and
+the larger shapes 4 × 128 and 3 × 192, for knob off and `fw_wide`. Its only allowed effect is one documented change by these
+rules, fixed now. The change is recorded in this section, with its bank and sha, before Stage 0 starts:
+- **N:** N moves to 1024 or 2048 only if an ABBA (off, `fw_wide`, `fw_wide`, off at 64 sims, Stage 0's method and steady rate) shows
+  ≥ +3% steady rows/s for BOTH off and `fw_wide` against N = 512. Both arms must also stay inside the memory rule below.
+  Otherwise N stays 512; ties go to 512.
+  - N above 512 means eager chunks: `eager_over_max_rows` > 0, which the per-arm gate below then expects.
+  - `--eval-chunk-rows` accepts at most 2,048.
+- **Shape:** a larger shape is adopted for ALL arms only if three things hold:
+  - the `check_vram` refit PR has merged and passes it;
+  - every arm's peak − idle at that shape is ≤ `memory.total` − 1,024 MiB − 4,096 (the guard's idle cap), which is
+    27,487 MiB on this card;
+  - knob-off's steady rows/s rises ≥ +5% over 3 × 128 by ABBA.
+
+  Otherwise 3 × 128.
+- The arm and its control always run at the same shape; the rule never moves one alone. At 3 × 128, `fw_wide`'s measured
+  peak − idle of 8,051 MiB is far inside the bound, so no smaller-shape
+  fallback is registered.
+
+**`check_vram` at `0d4d11572275095f883f22df17d5b7f25683e41b`** (the pin's own check; the refit to the chunked measurements is PR #1522, not part of
+this pin). It charges boards (35.52 MiB a board) and min(leaf buffer, N) forward rows.
+- At 3 × 128, 64 sims, it predicts 8,381 MiB per process for off, B and the wide arm alike, 24.55 GiB at K = 3. That is ≤ the
+  26.43 GiB usable, so the single `--collect-procs 3` driver Stage 3 uses passes, and **Stage 3 as registered launches
+  without the refit.**
+- Measured per process is 2,560–2,684 MiB, so the check is about 3.2× conservative here. Its record says
+  `extrapolated: true` for every chunked shape, because every fitted point was unchunked.
+- **Any larger shape needs the refit first** (PR #1522, open). It charges the measured chunked peaks (3 × 128,
+  64 sims: 2,684 / 4,291 / 6,474 MiB per process at N = 512 / 1,024 / 2,048), refuses topk 21 at 41 sims with
+  5,376-row forwards at model level, and marks every unmeasured shape (4 × 128, 3 × 192) `extrapolated`.
+
+### Why the wide arm (two sealed scoping banks)
+
+- **Two-visit scoping** (`~/chess-artifacts/operations/rl-claude-20261119/two-visit-children-scoping/README.md`
+  [`7e5a9693`]):
+  - Only children visited at least twice carry ordering information; a 1-visit child's Q is the net's own value.
+  - On 2,433 leak-free rows (mean 23.8 legal moves), children visited at least twice:
+    - A (knob off, topk 16, 64 sims): 7.23;
+    - B (knob on, topk 16): 13.77;
+    - C (knob on, candidates up to the realised cap): 21.42.
+  - So at the wide arm's leaf cost the search carries ordering on 2.7× as many children as arm A.
+- **Visits-per-child scoping** (`~/chess-artifacts/operations/rl-claude-20261119/visits-per-child-scoping/README.md`
+  [`a77b9936`], PREREG `688242a0`, stamped before the GPU arms). It measures ordering accuracy against SF 8M on
+  38,705 clear pairs, with a game bootstrap:
+  - **Each wide arm beats its equal-leaf knob-off control:** C@64 vs off@90 +0.0977 [+0.0888, +0.1069], W128 vs
+    off@154 +0.0897, W270 vs off@296 +0.0811. The PREREG notes that this readout rewards coverage by construction.
+  - **More sims per root do not improve on C@64** (descriptive): W80 − C −0.0018 [−0.0039, +0.0004]; W128 − C
+    −0.0039 [−0.0075, −0.0001].
+  - **Policy-target cross-entropy against BT4 is lowest for C@64**: 2.390, against A's 2.402. It rises with sims in
+    both families.
+  - Caveats: the ruler is SF-referenced and one ply deep, so it cannot speak to Elo. One net, one seed, fresh trees.
+
+These are scoping readouts, not a test. `fw_wide` enters the record under B's kills, unchanged in form; it is not adopted.
+
+### The wide arm, and how its topk moves with its sims
+
+- **`fw_wide`** = `--root-full-width --topk T --sims S`, where **`T = (S + 1) // 2`**. In the table below, C
+is this arm, `S_C` its sims and `T_C` its topk.
+- The realised candidate width is `min(topk, L, (sims + 1) // 2)` (`gumbel_c.py` `_realized_candidate_width`), and
+  round 0 visits every legal child whatever the topk. So `T_C` is the smallest topk that gives the same search as
+  any larger topk at `S_C`: at 64 sims, topk 32 is the same search as topk 64.
+- **`S` and `T` move together.** Every run states both, and a run whose realised leaf buffer differs from
+  128 × 2 × `T` is refused.
+
+**Realised width at the candidate sims** (CPU, from the scoping bank's leak-free rows; mean legal 23.84). The table is
+banked with this addendum: `RFW/addendum2/width_table.json` [`1edde491`], from `RFW/addendum2/width_table.py` [`bcd304df`].
+
+| S_C | T_C = cap | mean realised width | share of rows with width < legal |
+|---|---|---|---|
+| 38 | 19 | 15.96 | 0.613 |
+| 40 | 20 | 16.57 | 0.583 |
+| 41 | 21 | 17.16 | 0.554 |
+| 42 | 21 | 17.16 | 0.554 |
+| 44 | 22 | 17.71 | 0.522 |
+| 46 | 23 | 18.23 | 0.487 |
+| 48 | 24 | 18.72 | 0.460 |
+| 64 | 32 | 21.75 | 0.270 |
+
+For B, the mean width is 13.95 at every budget. The prediction was checked against measurement at 64 sims:
+- C: children visited twice or more are predicted 21.75 and measured 21.42;
+- B: measured 13.77.
+
+### The re-pin (bank files changed by this addendum; old versions kept as `.vN`)
+
+The re-pin is mechanical: `addendum2/repin.py <bank> <pin> --apply`. It is idempotent per version, refuses if any edit
+does not apply exactly once, keeps every changed file as `.vN`, and moves `HOLD_REPIN` aside.
+
+| File | Change |
+|---|---|
+| `stage0/run_stage0.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; knob on: `--topk (S + 1) // 2`, knob off: `--topk 16`; `--eval-chunk-rows 512`; gates per process: `eval_max_batch_realised` = 128 × 2 × topk, `eval_chunk_rows_realised` = 512, `eager_over_max_rows` = 0; the row records `topk` |
+| `stage0/stage0_decide.py` | per row: topk = the rule (knob on) or 16 (off), chunk rows 512, leaf buffer 256 × topk; the same tolerances and step rule |
+| `stage1/run_stage1.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b` |
+| `stage1/stage1_search.py` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; the knob arms search at topk (S + 1) // 2, checked on the built config; `<tag>__topk` banked |
+| `run_rfw_match.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b` |
+| `stage2/run_stage2.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; the knob seat gets `topk=(S + 1) // 2` in its gumbel overrides |
+| `check_shape.py` | the knob seat's realised topk must be (its sims + 1) // 2; the other seat stays the PIN's training shape |
+| `stage3/launch_stage3.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; the training collect at `--topk (S_eq + 1) // 2 --eval-chunk-rows 512`; its collect check adds the three realised-field gates |
+| `guard_test/guard_test.sh`, `run_mutants_v12.py`, `stage0/fab_test/run_fab.py` | the arena-worktree link → `rl-run1-rfw-arena-0d4d11572`; the stub's stats follow the flags passed (and `STUB_CHUNK` / `STUB_EAGER` / `STUB_EMB` override them); cases and mutants M75–M88 for every changed gate, including Stage 3's collect check (M84 chunk rows, M85 eager, M86 leaf buffer, M87 / M88 its `S_eq` argument missing / wrong); fab fixtures carry topk (originals kept as `*.pre-addendum2.jsonl`) plus two wide-gate cases |
+
+- `SHA256SUMS` and the record's sha table are rebuilt.
+- The guard harness and a FULL M-series run on the re-pinned bank, with the runner's `--banks` enforcement.
+- The arena worktree is a detached `rl-run1-rfw-arena-0d4d11572`, with extensions built by
+  `build_production_extensions.py` and the provenance check. The `fd8c0ce08` worktree is left untouched.
+
+### The mutant series at the re-pin (runner v12.1: early exit)
+
+- **The catch rule is unchanged in substance and stricter in form.** A mutant is CAUGHT only by a `WRONG` line from
+  a named, non-timing case, and the runner prints that case and its reason per mutant, so a vacuous kill can be
+  audited. A syntax error, a mutant that does not apply, a harness crash, a missing total line, a timeout, or a
+  non-zero exit without a `WRONG` line is never a catch.
+- **Early exit.** With `--early-exit` the harness of a mutant stops at its first such `WRONG` line. A survivor still
+  runs every case, so no verdict can change. Each harness carries a unique tag in its environment and runs from its
+  copy's directory. After each harness, killed or not, the runner kills every process still carrying the tag (or
+  with a cwd inside the copy), after reading its command line, and stops the series if any remains after 8 s.
+  `GPU_CHECK_HOLD` stops the series within about a second, as does a registered stage becoming active (`--banks`).
+- **Every mutant applies exactly once and parses** (`--apply-only`, no harness): on the re-pinned bank, 121 of 121.
+  This covers the shell files (`bash -n`), the Python files, and every `<<'PY'` heredoc inside a shell file; M85's
+  heredoc, for example, compiles. On synthetic collect stats (`S_eq` 48), M84 / M85 / M86 each pass only their own
+  bad field (chunk rows 1,024 / eager 2 / leaf buffer 4,096), and M87 / M88 refuse every collect.
+- **Deviation: the cases run in their fixed order.** `guard_test.sh` is one sequential script whose later cases
+  depend on fake-bank state built by earlier ones, so a mutant's likely catching cases cannot be moved to the front
+  without changing the cases. The early exit therefore saves only the cases after the first catch.
+- **Control, before any early-exit verdict counts** (current staging, before the re-pin; mutants chosen
+  mechanically: every 12th id, then M57 and M70):
+  - early-exit run: M0 survived with `TOTAL PASS=200 WRONG=0` (every case ran) in 694 s; all 10 mutants CAUGHT by a
+    named case; 906 s wall at `--jobs 4`;
+  - full run: stopped by a `GPU_CHECK_HOLD` after 4 of 11, each identical to the early-exit run in verdict and
+    catching case (M0 200 / 200; M14 case 141, M26 case 200, M38 case 165). The other 7 run in full mode after
+    generation 2, before the series.
+  - First catching case, of 200: M50 1, G19 6, G9 15, M57 28, M70 30, M66 33, G26 55, M14 141, M38 165, M26 200
+    (seconds 4 to 702). A caught mutant costs about 256 s on average against about 700 s for a full harness.
+- **Harness fixes after the re-pin (`guard_test.sh` v15; the re-pinned copy kept as `.v14`).** The first unmutated
+  pass on the re-pinned bank had 4 WRONG, all in cases `repin.py` had added and that had never run:
+  - the fab case counted `WRONG` with a pattern that also matched run_fab's own `TOTAL WRONG=0` line (it now counts
+    `': WRONG'`; run_fab itself was rc 0, 0 WRONG, both wide cases PASS);
+  - the three Stage 3 collect-check cases ran `env VAR=… fake …`, but `fake` is a shell function, so nothing ran
+    (they now export the variable inside the command substitution).
+  The second pass then had 1 WRONG: those three cases' clears left aborted dirs that a later `clear_step` case
+  counts; v15 removes them (fake bank only). `repin.py` is unchanged: it is the record of what was applied.
+  Outputs: `guard_test/guard_test.addendum2.v14_4wrong.txt`, `…v15a_1wrong.txt`.
+- **The series:** **not exhaustive at the re-pin: stopped by owner decision.** Everything below ran on
+  the re-pinned staging bank (`guard_test.sh` v15, `gpu_scan.sh` v6, runner v12.1, `--jobs 4`).
+  - Unmutated pass: `TOTAL PASS=213 WRONG=0`, harness rc 0 (`guard_test/guard_test.addendum2.txt`).
+  - Apply-only: 121 of 121 apply exactly once and parse (above).
+  - Full-mode control (`guard_mutants_v12_control_full2.txt`): `MUTANTS RAN=8 EXPECTED=8 NOT_OK=0`, wall 2,106 s.
+    M0 survived 213 / 213. M50, G9, G19, M57, G26, M66 and M70 were each CAUGHT by the same named case as in the
+    early-exit control (case numbers shift by one after case 55, for the case v13 added). Together with the 4 full-mode
+    runs before the hold (pre-re-pin, 200 cases), all 11 control runs agree with the early-exit run on verdict and
+    catching case.
+  - Early-exit series (`guard_mutants_v12_series_final.txt`, about 68 min): M0 survived 213 / 213. Then M1, M2,
+    M3, M4, M6, M7, M8, M10 to M27 (25 mutants) were all CAUGHT, with first catches at cases 5 to 198, 4 to 763 s
+    each. The owner stopped the series there: it was not worth the idle GPU. The runner's process group was sent
+    SIGTERM, and a /proc scan afterwards found no tagged process and none with a cwd in a bank copy. A planned second leg at
+    `--jobs 8` was cancelled before it started.
+  - **So 32 of the 120 mutants are caught at the re-pin**: the 25 above plus the 7 control mutants. The other 88
+    were never run at the re-pin: M28–M49, M51–M56, M58–M65, M67–M69, M71–M88, G1–G8, G10–G18, G20–G25 and
+    G27–G34. They were checked by apply-only alone. For their guards the evidence is the unmutated pass at the
+    re-pin (213 / 213) and the full v11 series on the pre-re-pin harness (G1–G33 and M1–M68, all caught; see
+    "Mutants v11"). It is not a fresh series. M69 and M71–M88 (from the #1509 review, the re-pin and the wide arm)
+    and G34 have no series verdict at all, only apply-only. G34 was also checked by hand, as described under v6
+    above.
+
+### Realised-field gates on every run
+
+- `eval_max_batch_realised` = 128 × topk × 2: 4,096 for the knob-off control (topk 16), and 8,192 for `fw_wide`
+  at 64 sims (topk 32).
+- `eval_chunk_rows_realised` = 512 on every process, and `eager_over_max_rows` = 0.
+- 0 buffer flushes; `mean_root_prelude_visits` > 0 for `fw_wide`, and absent or 0 for off.
+- A run whose realised fields differ from these is refused, never blended.
+
+### Confounds (added)
+
+- **`fw_wide` changes three things at once** against the control: the knob, the candidate width (`topk` (S + 1) // 2
+  instead of 16), and the sims (`S_eq`). They are registered as one arm, as B's knob and sims were. A result cannot
+  attribute itself to the width alone; the topk-16 comparison is withdrawn (see "What is lost").
+- **The pin moved** for every arm: `0d4d11572275095f883f22df17d5b7f25683e41b` adds forward chunking.
+  - Its effect on results is batch-size rounding. On the CPU (fp32), chunked against unchunked differs by at most
+    4.8e-7 in a policy logit; the GPU bf16 bound is checked by the PR's CUDA tests at the merged head.
+  - It applies to the control and the arm alike.
+
+### Not tested here: more sims on a fraction of moves
+
+The owner's alternative was "if we only doing a quarter moves high nodes it won't really be expensive". It is not
+proposed, because the visits-per-child scoping does not support it:
+- **At equal mean leaves per move,** wide@S on a fraction p of moves costs the same as `fw_wide`@64 (C@64 in the
+  scoping bank) on every move:
+  - p = 0.54 at S = 128;
+  - p = 0.27 at S = 270, which is about 25 full-search rows per game instead of about 95.
+- **A fast ply stores no policy row** (no row at all by default).
+- So the schedule trades about 70% of the ordering and policy rows for rows that are each no better on this ruler:
+  - ordering: W270 − C −0.0039 [−0.0089, +0.0013]; W128 − C −0.0039 [−0.0075, −0.0001];
+  - policy-target CE against BT4: 2.810 for W270 and 2.532 for W128, against C@64's 2.390.
+
+### Cost
+
+Unchanged. One arm, as registered; `fw_wide`'s Stage 0 runs at a measured rate within 3% of B's.
 
 ## Confounds
 
@@ -999,11 +1667,15 @@ This is the owner's idea in a form that adds no evaluations.
 
 ```bash
 B=$HOME/chess-artifacts/operations/rl-run1-root-full-width
-AW=$HOME/projects/chess-worktrees/rl-run1-rfw-arena-fd8c0ce08; PY=$HOME/projects/chess/.venv/bin/python
+# (Addendum 2) once, after this record's PR merges: the staged bank replaces the real one (dry run first; the old
+# bank is kept whole as $B.pre_swap_addendum2; refuses if any real-bank file would lose its only copy)
+$B.staging/addendum2/bank_swap.sh && $B.staging/addendum2/bank_swap.sh --apply || exit 1
+AW=$HOME/projects/chess-worktrees/rl-run1-rfw-arena-0d4d11572; PY=$HOME/projects/chess/.venv/bin/python
 (cd $B && sha256sum -c --quiet SHA256SUMS) || exit 93
-cd $AW && [ "$(git rev-parse HEAD)" = fd8c0ce08e1a0829e051cf1a6fef07fd6e83c244 ] || exit 96
-$PY scripts/build_production_extensions.py || exit 1          # the worktree's .so files, at this commit
-# Every GPU stage first needs the OPERATOR's line in $B/GPU_RELEASED_BY_OPERATOR, e.g. "stage0 2026-11-22T09:00".
+cd $AW && [ "$(git rev-parse HEAD)" = 0d4d11572275095f883f22df17d5b7f25683e41b ] || exit 96
+# the worktree's .so files were built and provenance-checked by addendum2/operator_repin.sh (operator_repin.log)
+# Every GPU stage first needs the OPERATOR's line in $B/GPU_RELEASED_BY_OPERATOR, with the idle memory.used the
+# operator measured just before, e.g. "stage0 idle_mib=2068 2026-11-25T21:00 <note>".
 # Stage 0 (writes stage0/decision.json)
 $B/stage0/run_stage0_all.sh || exit 1
 # Stage 1 (GPU search, then CPU score and verdict)
@@ -1012,7 +1684,8 @@ $B/stage1/run_stage1.sh || exit 1
 $PY $B/stage1/stage1_decide.py $B/stage1/scores/scores.json $B/stage1/verdict.json || exit 1
 # Stage 2 (refuses unless Stage 1 is PROCEED)
 $B/stage2/run_stage2.sh || exit 1
-# Stage 3: NOT AUTHORISED. After the owner's yes, the coordinator writes $B/stage3/OWNER_GO, then:
+# Stage 3: authorised by the owner's standing statement (2026-11-22). After Stages 0-2 pass by their rules and
+# are read in-session, the coordinator writes $B/stage3/OWNER_GO and the operator's stage3 release line, then:
 $B/stage3/launch_stage3.sh
 ```
 
