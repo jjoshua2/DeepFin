@@ -4,7 +4,7 @@
 - this record merged;
 - the admission record merged (`2026-11-26-banked-collections-admission.md`, #1523);
 - the pooled bank built from it and read back in staging;
-- the measured host-RAM load and the GPU memory smoke (below);
+- the real kC pool rebuilt from the merged admission record, the launch-time host-RAM floor and the GPU memory smoke (below);
 - a free GPU.
 
 Only CPU work has been done for this record.
@@ -54,17 +54,45 @@ exact-once, second pass and 16,000.
 
 | Arm | What | Matches |
 |---|---|---|
-| **primary** | `gen1_baked.pt` trained once over the pooled kC bank (2,767,035 rows, 3.47×), or kB (1,972,644 rows, 2.48×) if kC fails the host-RAM rule | vs the parent, 12,800 games (800-game damage screen first); vs the SL base only if it improves vs the parent |
+| **primary** | `gen1_baked.pt` trained once over the pooled **kC** bank (2,767,035 rows, 3.47×). The coordinator chose kC on the measurement below. kB (1,972,644 rows, 2.48×) is used only if a quiet host still fails the launch-time floor | vs the parent, 12,800 games (800-game damage screen first); vs the SL base only if it improves vs the parent |
 | **fresh k1** | the existing `gen2_baked.pt` (1×), no retrain | vs the parent, 12,800 games, same seed and size as the primary |
 | checkpoints | the primary run's weights at 1,478 / 2,189 / 3,675 updates (and the final) | none registered; recal fits only (below) |
 
-**Choosing kC or kB, by measurement only.**
-- Before launch, the pooled kC bank is loaded on the CPU exactly as the trainer loads it (the pin's `load_window` →
-  `prepare_targets` over the pool, no GPU), and its peak RSS is measured.
-- kC is the primary iff that peak plus 12 GiB fits the host's `MemAvailable` at the time, with the other GPU/CPU jobs
-  of that window running.
-- Otherwise the primary is kB, measured the same way.
-- The measured peak and the choice go in the launch addendum. No projection decides it.
+**kC vs kB was chosen by measurement: kC.** Measured 2026-11-26.
+- **Method:**
+  - The pin's own `learn.load_window(pool, 1, settings)` + `prepare_targets`, with generation 2's exact flags parsed
+    by the pin's parser (`--seed 2026112601 --games 27840`).
+  - CPU only, one thread, niced, a MemAvailable watchdog at 12 GiB that never fired.
+  - The load ran on a kC pool built in staging (`rl-run1-volume.staging/rss/pool_kC`, 150 shards, 2,767,035 rows).
+- **Result** (`rss/rss_kC.json` [`7655061d`], log `rss/rss_kC.log` [`aebd11e9`], script `rss/rss_load.py` [`a8ef886e`]):
+  - train rows 2,636,964, hold-out rows 130,071, planned updates 5,151;
+  - **peak RSS (`ru_maxrss` = `VmHWM`) 60.46 GiB;**
+  - **the loaded arrays total 72.14 GiB.** That is more than the peak RSS, because some preallocated pages are not
+    touched by the load but are touched in training. **72.14 GiB is taken as the conservative footprint.**
+  - Host MemAvailable was 90.3 GiB before the load, and fell to a minimum of 33.1 GiB with a 1-thread CPU check
+    running beside it.
+- **The staging pool is a measurement artefact, not the run's input.** Because the admission record had not merged,
+  it was built under the tool's test override, bound to #1523's head file (sha256 `dfef9a7e…`), and its pool block
+  says so. **The pool for the real run is rebuilt after #1523 merges,** with `ADMISSION_SHA256` set to the merged
+  file's digest. Its counts and shard digests must equal the staging pool's (same sources, same order); any
+  difference is a refusal to investigate, not to explain away.
+
+**Host-RAM guards during the run:**
+- **Launch-time floor: `MemAvailable` ≥ 86 GiB** (72.14 + 12 GiB margin + ≈ 2 GiB for the trainer process),
+  checked by the launcher immediately before the training step's `.started`.
+  - A miss writes `HOLD_HOST_RAM`. The operator quiets the host and retries.
+  - kB is used only if a quiet host still fails the floor. The switch to kB is recorded, with its own measured load.
+- **No agent harness or test run may be active during the load phase.** The coordinator enforces this with the hold
+  file.
+- **A MemAvailable watchdog during training, and what the pin supports.**
+  - The pin's `--pause-marker` is checked only between stages, so it cannot stop a training phase in flight.
+  - The pin's `--snapshot-updates` keeps a resumable state (trainer, optimizer, sampler cursor, RNG) at the newest
+    snapshot. A killed phase resumes from there with the same plan.
+  - So the launcher runs its own watchdog. Below 6 GiB MemAvailable it writes `STOP` (the pause marker, which blocks
+    every later stage) and sends SIGTERM to the training process itself. The OOM killer never chooses.
+  - The phase then resumes from its newest snapshot (1,478 / 2,189 / 3,675 updates), losing at most one snapshot
+    interval, about 8 GPU-min.
+  - A second watchdog stop is a HOLD for the owner.
 
 **Updates are the pin's own plan, never a hand formula.**
 - The trainer at the pin plans `ceil(trainable_rows / 512)` over the rows outside the game-hash hold-out
@@ -148,13 +176,18 @@ are one re-sealed shard of each of the five banks.
 - the admission list ignored;
 - the admission sha256 ignored.
 
-**Staging status.**
+**Staging status (2026-11-26, CPU).** Paths are under `~/chess-artifacts/operations/rl-run1-volume.staging/`.
 - Revision 1's tool and harness (control 20/20, 15/15 mutants killed) are superseded.
-- Revision 2's changes are written but **not yet run**, because the coordinator's CPU/GPU hold is up. They are:
-  5-bank fixtures, the kC/kB cells, the admission binding, C18, C19 and three new mutants (18 in all).
-- They run when the hold clears. Their control and mutant outcomes, with sha256 stamps, go in the launch addendum.
-- After the admission record merges, the real pool is built and read back over every shard with
-  `pool_harness.py real`.
+- Revision 2:
+  - `prelaunch/pool_collect.py` [`a8e824d7`];
+  - `test/pool_harness.py` [`d3cc705d`], 5-bank fixtures (`fixture_v2/`);
+  - **unmutated control 24/24**;
+  - `test/mutants_pool.json` [`4ec53565`], run with `test/mutants.py` [`aaec0d68`]: **18 mutants, 18 killed**, each by
+    a named FAIL line;
+  - results in `test/mut_pool_v2.out` [`55232da5`] and `test/mut_pool_v2/mutant_results.json`.
+- The starts mutant (M16) is killed by C18. The two admission mutants (M17, M18) are killed by the P5 cases.
+- After the admission record merges, the real kC pool is built bound to the merged record and read back over every
+  shard (`pool_harness.py real`). The launch addendum quotes those read-backs.
 
 ## Training, checkpoints and recalibration
 
@@ -272,9 +305,8 @@ seed buys nothing. The shared seed is kept only so that both arms play the same 
 ## Memory, GPU time and recovery
 
 **Host RAM.** The stock loader holds every training row.
-- The measured CPU peak RSS of the pool that will run decides kC vs kB (above).
-- The pilot's launch record implies about 2.9 GiB per 100k rows, which projects kC at ≈ 73–84 GiB on a 98 GiB host.
-  That projection decides nothing; the measurement does.
+- Measured for kC: 60.46 GiB peak RSS, 72.14 GiB of loaded arrays (the conservative footprint). The guards are a
+  launch floor of MemAvailable ≥ 86 GiB, the training watchdog and the load-phase hold (above).
 
 **GPU memory.** Batch 512 and the model are unchanged (generation 2's smoke: 16.96 GiB peak reserved, flat from update
 2 to 3). The primary still runs the 3-update GPU smoke on its own pool before training:
