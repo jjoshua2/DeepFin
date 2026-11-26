@@ -831,17 +831,18 @@ The argument does not change: no hunk is in a row loader, and the step-0 lines a
 
 Guard (d) (`check_load.py`, PIN vs `TSHA`, bit-equal) runs at step 3 as registered. It does not call `inference.py`.
 
+**#1514 is not in `TSHA`.** It merged after `TSHA`, at `515aa602b`. It changes only how a damaged or non-dict
+snapshot file is refused (by name, with the term on or off), not what a readable snapshot resumes. The cells train at
+`TSHA` without it. A damaged snapshot there fails with the pre-#1514 error and is handled by the crash-rerun rule.
+
 ### The memory smoke as built (P4, smoke part)
 
 `SB7/prelaunch/sib_mem_smoke.py`, staged at sha256 `2eb7205b…`. Its harness is `test/smoke_test.sh` (`e6cb520a…`):
 38/38 on the unmutated control. Its mutant set `test/mutants_smoke.json` (`90cef459…`, runner `mutants.py`
 `aaec0d68…`) has 22 mutants. The first full pass (2026-11-22) killed 21. M11 survived because its case was
 refused first by the stem/chunk rule; the case now runs at chunk 32 and checks the marker message.
-- The M11-only rerun (2026-11-25) killed M11, and its control passed.
-- A full rerun on the current harness was started and stopped, by the coordinator's CPU hold, after its control
-  passed and M1–M17 were all killed.
-- **M18–M22 are pending on the current harness.** They were killed in the 2026-11-22 pass, whose harness differed
-  only in M11's case. The full result is added here before launch.
+- **The full set on the current harness (2026-11-26): control 38/38, 22 mutants, 22 killed**, each by a named FAIL
+  line (`~/chess-artifacts/operations/rl-run1-sibling-r7.staging/test/mut_smoke_r3.out` [`b1d9b5ee`]).
 
 Each
 rule below has at least one case in the harness and a mutant that removes it:
