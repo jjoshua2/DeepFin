@@ -42,10 +42,9 @@ moves fast?"
 
 **Evidence log first.** I grepped `2026-11-21-rl-loop-evidence-log.md` for playout cap, full-prob, fast,
 value-only, root_full_width, two-visit and visits-per-child. Everything this record cites is banked:
-- the playout-cap throughput at 64 / 16 sims (11-21);
-- the two scoping banks (11-22);
-- the full-width Stage 0 / 1 (11-26);
-- the data-volume matches (11-26).
+- in the log: the playout-cap throughput at 64 / 16 sims (11-21) and the two scoping banks (11-22);
+- in their banks, cited directly because their log rows are not on main yet: the full-width Stage 0 / 1 (11-26) and
+  the data-volume matches (11-26, `verdicts.json` [`fab91794`]).
 
 No row measures training on deep/fast data or on an ordering term over ≥ 2-visit children.
 
@@ -173,7 +172,16 @@ collector's `record_root_stats` (always on in the collect).
   - games/h;
   - peak MiB, with the 83% usable limit;
   - the realised gates: leaf buffer 128 × 2 × topk, chunk rows 512, 0 eager forwards, 0 flushes;
-  - on D legs, `root_prelude_visits` > 0 on every stored row, 0 stored fast rows, and stored share ≈ p by game.
+  - **on D legs** (each a gate):
+    - **no fast row stored:** every stored policy row that carries `has_search_budget` has `search_budget` == 80 (the
+      budget the ply was given, recorded per row), and `policy_rows == rows` in the collect stats. Rows without the
+      field (search shortcuts) are counted and reported, not gated;
+    - **full width took effect:** `has_root_prelude_visits` on every stored row that carries root stats, and the
+      leg-mean prelude > 0.
+    - A row with 0 prelude is valid: under tree reuse a root whose legal children are all already visited gets
+      none, and solved roots skip round 0. Shortcut rows are counted and reported;
+    - **stored share:** the pooled share of net plies stored, |share − 0.25| ≤ 0.02. finalize's drops of unresolved
+      games also move it, so they are reported beside it.
 - **Output:** the GPU-hours G_C that C needs for 2.8M stored rows (the kC dose; ≈ 5.1 GPU-h at 152 rows/s). D gets
   the same G_C, and its game count is set from its measured rate.
 - **Kill (D):** any realised gate fails, or `check_vram` refuses at topk 40.
@@ -201,9 +209,16 @@ collector's `record_root_stats` (always on in the collect).
 
 The net's own deeper search is never a reference.
 
-**Rule (per deep arm, paired against R64n on `exp_cp_lb`):**
-- **STOP that arm iff LB95 > 0 and the estimate is > +1.2 cp** (the seed-noise half-width).
-- Otherwise it proceeds to Stage 2.
+**Rule (per deep arm, paired against R64n), applied in order:**
+1. **Coverage.** The paired mean of mass on moves deep SF did not score (arm − R64n) must be ≤ +0.01. Otherwise the
+   arm is **UNREAD** until an SF top-up amendment. `exp_cp_lb` gives unscored moves only the 10th-best regret, so
+   extra unscored mass would flatter the arm.
+   - The top-up is the full-width record's procedure: every move with ≥ 1e-3 mass missing from the SF table is
+     labelled at 8M nodes, cold TT, production Syzygy, `searchmoves`, into a copy of the table, and the arm is
+     rescored. It is a new amendment, never a silent rerun.
+2. **Kill.** STOP that arm iff the paired `exp_cp_lb` has LB95 > 0 and the estimate is > +1.2 cp (the seed-noise
+   half-width).
+3. Otherwise it proceeds to Stage 2.
 
 **Report-only:** leave-top-game-out and drop-two-games intervals, since the full-width kill was tail-driven.
 
@@ -214,6 +229,9 @@ Stage 1 judges only the deep ply's policy target. It cannot see the allocation, 
 **Collections.** From `kC_baked.pt`, at the launch pin, one seed per arm:
 - C: stock 64 on every ply, ≈ 2.8M rows in G_C;
 - D: deep/fast, in the same G_C (≈ 1.15M rows projected).
+- **Equal GPU-hours is checked, not assumed.** Both arms' realised collection wall-hours are reported, at the shape
+  Stage 0 measured (3 × 128, 3 processes, the same pin). **Readout A is read only if the realised D / C collection
+  hours are in [0.9, 1.1]**; otherwise it is "unread: unequal cost".
 
 **Training.** Both from `kC_baked.pt` with the kC recipe, then recal fit and bake. D+O is the D rows plus the term,
 after the memory gate passes.
@@ -229,18 +247,30 @@ All arms share one seed, so they play the same book draw. No pairing is claimed.
 **The deciding yardstick, exactly:**
 ```bash
 # from the launch pin's worktree; DF = the new bank (rl-deep-fast/), created at launch
-PYTHONPATH=. $PY $DF/prelaunch/verdicts.py final $DF
+PYTHONPATH=. $PY $DF/prelaunch/verdicts3.py final $DF
 ```
-- `verdicts.py` is the data-volume bank's `~/chess-artifacts/operations/rl-run1-volume/prelaunch/verdicts.py`
-  [`f487d849`], with its arm labels changed (C, D, D+O for kC, k1) and nothing else changed.
-- Per match: improves iff LB95 > 0, damage iff UB95 < 0, adoptable iff LB95 > −10 Elo.
-- **Readout A:** Δ̂_DC = d̄_D − d̄_C on the score scale, SE = √(SE_D² + SE_C²).
-  - **"Deep/fast beats stock at equal GPU-hours" iff Δ̂_DC − 1.645·SE > 0, strictly.**
-  - **"Deep/fast loses" iff Δ̂_DC + 1.645·SE < 0.** Otherwise unread.
-  - MDE80 ≈ 8.1 Elo (SE ≈ 3.24 Elo-equivalent; data-volume record, power).
-- **Readout B:** Δ̂_OD = d̄_{D+O} − d̄_D, the same rule and wording ("the term helps / hurts / unread").
+- **`verdicts3.py` is a new three-arm script for this bank.** The launch addendum pins it by sha256. It is written
+  from the data-volume bank's `verdicts.py` (`~/chess-artifacts/operations/rl-run1-volume/prelaunch/verdicts.py`
+  [`f487d849`]) for its per-match pooling and bootstrap only. That file cannot be reused as is: it has one two-arm
+  contrast with no "loses" branch, and it refuses to finish when the first arm improves without a base match, which
+  this record does not register. The new script's rule:
+  - **Per match** (C, D, D+O, each vs the parent `kC_baked.pt`, from its `pool.json`): improves iff LB95 > 0, damage
+    iff UB95 < 0, adoptable iff LB95 > −10 Elo, else unread. An unavailable interval reads unread.
+  - **Readout A:** Δ̂_DC = d̄_D − d̄_C on the score scale, SE = √(SE_D² + SE_C²). It reads
+    **"deep/fast beats stock" iff Δ̂_DC − 1.645·SE > 0**, **"deep/fast loses" iff Δ̂_DC + 1.645·SE < 0**, both
+    strict. Otherwise it is unread, and it is also unread if the cost check above fails. MDE80 ≈ 8.1 Elo
+    (SE ≈ 3.24 Elo-equivalent; data-volume record, power).
+  - **Readout B:** Δ̂_OD = d̄_{D+O} − d̄_D, the same SE rule. It reads **"the term helps" iff Δ̂_OD − 1.645·SE > 0**,
+    **"the term hurts" iff Δ̂_OD + 1.645·SE < 0**, otherwise unread. If D+O did not play, it reads "unread" with
+    its reason.
+  - **No base match is required** or read. A missing arm makes only its own readings unread; it never makes the
+    script fail.
+  - **Bootstrap, a check only:** B = 20,000, the opening key as the unit, arms resampled independently. It never
+    decides.
+  - The launch addendum shows from fixture `pool.json` files that a correct run reaches every reading: each match
+    reading, both branches and unread for A and for B, the cost-check unread, and a missing D+O.
 - D+O plays only if D's own match does not read damage.
-- The bootstrap is a check only (B = 20,000, opening key as unit). No threshold changes in flight.
+- No threshold changes in flight.
 
 | Outcome | Licenses |
 |---|---|
@@ -248,6 +278,8 @@ PYTHONPATH=. $PY $DF/prelaunch/verdicts.py final $DF
 | A: D loses | deep/fast at p = 0.25 / 80 / 16 is worse per GPU-hour than stock 64 here. Says nothing about value-only fast rows or other p |
 | A unread | no claim. Each arm's own vs-parent reading is reported |
 | B: the term helps | the ordering term over ≥ 2-visit children adds strength on deep/fast data |
+| B: the term hurts | the term costs strength on deep/fast data at its sealed strength |
+| B unread | no claim. **If the sibling screen has no Stage A reading by 2027-01-31, Readout B is recorded as "unread, insufficient evidence"** and this record closes on Readout A alone |
 | either arm vs parent | reported as in the data-volume record. C is also the line's next stock generation, so its reading is useful whatever A says |
 
 ## Confounds (named, not removed)
@@ -263,7 +295,13 @@ PYTHONPATH=. $PY $DF/prelaunch/verdicts.py final $DF
    already showed that width alone at 64 sims is a null on the policy target.
 4. **Tree reuse** carries fast-ply visits into deep roots: 8.5 carried visits against 12.1.
 5. **Actor and parent** are `kC_baked.pt`, not the SL base. Every scoping number cited is the SL base's.
-6. **The pin** must contain #1511. If #1522 merges first, its `check_vram` applies, and it marks topk 40 / 80 sims as
+6. **The actor's own step is fragile.** kC's "improves" over its parent is +5.08 [+0.48, +9.67], a lower bound
+   near 0 (`~/chess-artifacts/operations/rl-run1-volume/verdicts.json` [`fab91794`]).
+7. **Stage 1 screens a different actor without reuse.** It scores the SL base's W80 searches on fresh audit roots, not
+   kC's searches with tree reuse. It screens the deep target's quality; it does not measure D's stored rows.
+8. **Fast plies choose the positions.** 75% of D's moves are chosen by a 16-sim search, so the positions the deep
+   plies are stored at come from a different distribution than C's, not only a more decisive one.
+9. **The pin** must contain #1511. If #1522 merges first, its `check_vram` applies, and it marks topk 40 / 80 sims as
    extrapolated.
 
 ## GPU-hours
@@ -293,6 +331,8 @@ Rates: 0.3164 s/update and 1.45 GPU-h per 6,400 games (data-volume record); 152 
 
 - **D3's every-child-≥ 3 visits:** needs `root_full_width_visits` (above). Everything D needs exists.
 - **Per-ply topk:** not needed. Width is capped by the budget on fast plies.
-- **A per-row "fast" flag:** there is none (manifest only, caveat 11). Not needed, since D stores no fast rows.
+- **A per-row "fast" flag:** not needed. Every stored row carries `search_budget`, the budget its ply was given
+  (`selfplay/network_turn.py`, `replay/shard.py`). That is the per-row take-effect observation for `--full-prob` /
+  `--fast-sims`; the evidence log's caveat 11 ("manifest only") is out of date on this point.
 - **The ordering term on D:** exists (`--w-sibling`, rev 7). Its strength and chunk are sealed by the sibling
-  screen's addendum, which has not launched. Readout B waits for it.
+  screen's addendum, which has not launched. Readout B waits for it, until the date above.
