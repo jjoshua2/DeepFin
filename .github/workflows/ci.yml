@@ -34,18 +34,53 @@ jobs:
         with:
           activate-environment: true
       # Same locked dependencies and native build constraints as local setup.
+      # ⚑ RECORD-ONLY FAST PATH. A pull request whose every changed path
+      # (old and new name of a rename included) is docs/experiments/*.md cannot
+      # change what the two suites below execute, yet each push used to wait
+      # ~58 min for them. For those PRs this job runs only the tests that read
+      # the records. Anything else — a push to main, an API error, an empty file
+      # list, one path outside that directory — leaves `records_only` unset and
+      # the full suites run. The job is never skipped: `test` is a required
+      # check and must report a real result.
+      - name: Classify the change
+        id: scope
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_FILES_URL: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files
+        run: |
+          set -euo pipefail
+          gh api --paginate "$PR_FILES_URL" -q '.[] | .filename, (.previous_filename // empty)' > changed.txt
+          n=$(wc -l < changed.txt)
+          other=$(grep -cvE '^docs/experiments/[^/]+\.md$' changed.txt || true)
+          echo "changed paths: $n, outside docs/experiments/*.md: $other"
+          cat changed.txt
+          if [ "$n" -gt 0 ] && [ "$other" -eq 0 ]; then echo "records_only=true" >> "$GITHUB_OUTPUT"; fi
+          rm -f changed.txt
       - name: Install package + dev deps
         run: |
           uv sync --locked --extra dev --extra cpu
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # Keep a capped regression even though ordinary CI can use all cores.
       # Worker tests run in-process and must restore their one-thread setting.
+      - name: Record-reading tests (record-only pull request)
+        if: steps.scope.outputs.records_only == 'true'
+        env:
+          CAE_TEST_THREADS: auto
+        run: |
+          set -euo pipefail
+          mapfile -t files < <({ echo tests/test_no_absolute_home_paths.py; echo tests/test_verify_evidence_stamps.py; grep -l 'docs/experiments' tests/test_*.py; } | sort -u)
+          echo "running: ${files[*]}"
+          python -m pytest -q "${files[@]}"
       - name: Capped local regression
+        if: steps.scope.outputs.records_only != 'true'
         env:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: magic
         run: python scripts/validate.py capped --require-cpu-wheel
       - name: Ordinary CPU suite
+        if: steps.scope.outputs.records_only != 'true'
         env:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: magic
