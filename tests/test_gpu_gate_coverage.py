@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from chess_anti_engine.utils.gpu_entry_points import GPU_ENTRY_POINT_NAMES
+from tests.gpu_gate_ungated import UNGATED
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -40,7 +41,13 @@ GATED_PY = {
     "scripts/profile_distributed.py": True,
     "scripts/factorial_prepare_and_train.py": True,  # research launcher: startup + before training A
     "scripts/bench_pipeline.py": False,  # no argparse: the override is CAE_ALLOW_BUSY_GPU only
+    # Second review round (HIGH agent tools that were ungated with no reason):
+    "scripts/build_aot_packages.py": True,
+    "scripts/validate_time_mgmt.py": True,
+    "scripts/simple_rl_loop.py": True,  # `run` only: it trains in-process, then starts the gated arena
 }
+# Package modules run with `python -m` (tool name = the module path).
+GATED_MODULES = {"chess_anti_engine/arena.py": "chess_anti_engine.arena"}
 GATED_SH = ["scripts/tcec_autotune.sh", "scripts/bench_batch_wait.sh"]
 
 # Never gated: the live run and what it starts, and the match engine itself (GUIs / the owner launch it).
@@ -56,8 +63,9 @@ NEVER_GATED = [
 # Scripts that match the GPU signal below but cannot reach the GPU (reviewed by hand). Empty today.
 REVIEWED_NOT_GPU: frozenset[str] = frozenset()
 GPU_SIGNAL = re.compile(
-    r"""["']cuda(:\d+)?["']|torch\.cuda\.(is_available|set_device|synchronize)|CUDAExecutionProvider"""
+    r"""["']cuda(:\d*)?["']|torch\.cuda\.(is_available|set_device|synchronize)|CUDAExecutionProvider"""
     r"""|TensorrtExecutionProvider|--device[ =]cuda|-m chess_anti_engine\.(run|worker|uci|arena)\b"""
+    r"""|DirectGPUEvaluator\(|\.cuda\("""
 )
 
 
@@ -78,6 +86,13 @@ def test_gated_python_tool_calls_the_gate_under_its_own_name(path, flag):
         assert "add_allow_busy_gpu_argument" in names, f"{path} lost its --allow-busy-gpu flag"
         assert any(any(k.arg == "allow_reason" for k in c.keywords) for c in calls), (
             f"{path}: the flag is parsed but not passed to the gate (accepted and ignored)")
+
+
+@pytest.mark.parametrize(("path", "tool"), sorted(GATED_MODULES.items()))
+def test_gated_module_calls_the_gate_under_its_module_name(path, tool):
+    calls = _gate_calls(ast.parse((REPO / path).read_text()))
+    assert any(c.args and isinstance(c.args[0], ast.Constant) and c.args[0].value == tool
+               and any(k.arg == "allow_reason" for k in c.keywords) for c in calls), path
 
 
 @pytest.mark.parametrize("path", GATED_SH)
@@ -111,3 +126,44 @@ def test_every_script_with_a_gpu_signal_is_a_listed_entry_point():
     assert not missing, (
         "GPU-signal scripts missing from chess_anti_engine/utils/gpu_entry_points.py "
         f"(add them, or to REVIEWED_NOT_GPU with a reason): {missing}")
+
+
+def _calls_gate(text: str) -> bool:
+    return "require_gpu_idle(" in text or bool(re.search(r"gpu_gate\.sh\"? --tool ", text))
+
+
+def _gpu_scripts() -> list[Path]:
+    out = []
+    for p in sorted((REPO / "scripts").rglob("*")):
+        if not p.is_file() or p.suffix not in (".py", ".sh", "") or "__pycache__" in p.parts or p.name == "gpu_gate.sh":
+            continue
+        if p.name in GPU_ENTRY_POINT_NAMES or GPU_SIGNAL.search(p.read_text(errors="replace")):
+            out.append(p)
+    return out
+
+
+def test_every_gpu_script_is_gated_or_named_with_a_reason():
+    """Review finding: listing a script is not gating it. Each GPU script under scripts/ (a GPU signal,
+    or a listed entry point) calls the gate, or sits in tests/gpu_gate_ungated.py with a reason."""
+    bare = []
+    for p in _gpu_scripts():
+        rel = str(p.relative_to(REPO))
+        if _calls_gate(p.read_text(errors="replace")):
+            assert rel not in UNGATED, f"{rel} calls the gate: drop its UNGATED entry"
+        elif not UNGATED.get(rel, "").strip():
+            bare.append(rel)
+    assert not bare, f"GPU scripts that neither call the gate nor name a reason in tests/gpu_gate_ungated.py: {bare}"
+
+
+def test_ungated_table_has_no_stale_rows():
+    gpu = {str(p.relative_to(REPO)) for p in _gpu_scripts()}
+    stale = sorted(set(UNGATED) - gpu)
+    assert not stale, f"UNGATED rows that are not GPU scripts (or no longer exist): {stale}"
+
+
+def test_signal_sees_a_dodging_new_tool():
+    """The reviewer's dodge: no quoted bare "cuda" and no torch.cuda call."""
+    dodge = 'dev = torch.device("cuda:" + str(0))\nDirectGPUEvaluator(net, device=str(dev), max_batch=8)\n'
+    assert GPU_SIGNAL.search(dodge)
+    assert GPU_SIGNAL.search("model.cuda()\n")
+    assert GPU_SIGNAL.search('x = DirectGPUEvaluator(m, device=d)\n')

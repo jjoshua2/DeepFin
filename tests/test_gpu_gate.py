@@ -261,7 +261,7 @@ def test_override_passes_a_busy_gpu_and_records_what_it_saw(world):
     assert d.status == "OK allowed"
     assert d.code == 0
     assert any("owner engine check" in n and "30000" in n for n in d.notes)
-    assert d.marker == f"{SELF}:arena_standard"
+    assert d.marker == f"{SELF}:arena_standard:allowed"  # the override travels to the children
 
 
 def test_override_passes_even_when_probes_fail(world):
@@ -292,7 +292,7 @@ def test_children_of_a_gated_parent_pass_inherited_and_forgery_does_not(world):
     world.proc.add(900, 1, ["python3", "scripts/match_checkpoints.py"])
     d = decide(world, env=env, seams=world.seams(pid=900))
     assert d.code == 8
-    assert any("does not name an ancestor" in n for n in d.notes)
+    assert any("does not name a strict non-init ancestor" in n for n in d.notes)
 
 
 def test_for_pid_must_be_an_ancestor(world):
@@ -355,7 +355,7 @@ def test_cli_and_wrapper_exit_codes(tmp_path, cmd):
     assert r.returncode == 2
     r = subprocess.run([*cmd, "--tool", "t", "--for-pid", "999999999"], env=busy, capture_output=True, text=True, check=False, timeout=120)
     assert r.returncode == 2
-    assert "not an ancestor" in r.stderr
+    assert "not a strict non-init ancestor" in r.stderr
 
 
 def test_cli_without_test_seam_short_circuits_cpu_only(tmp_path):

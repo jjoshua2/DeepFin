@@ -46,6 +46,11 @@ TOOLS: dict[str, tuple[list[str], bool]] = {
     "profile_distributed.py": ([], False),
     "bench_pipeline.py": ([], True),
     "factorial_prepare_and_train.py": (["--config", "c.json", "--sha256", "0" * 64], False),
+    "build_aot_packages.py": (["--checkpoint", "x.pt"], True),
+    "validate_time_mgmt.py": (["--checkpoint", "x.pt", "--candidate", "abort_factor=1.0"], False),
+    # `run` trains in-process and then starts the gated arena; the run dir is never created (gate first).
+    "simple_rl_loop.py": (["run", "--run-dir", "take-effect-run-never-created", "--openings-dir", "o",
+                           "--generations", "1", "--device", "cuda", "--random-init"], False),
 }
 # Tools whose module imports torch before main() runs (the gate cannot precede that import):
 TORCH_BEFORE_GATE = sorted(t for t, (_, imported) in TOOLS.items() if imported)
@@ -99,3 +104,49 @@ def test_shell_tool_stops_at_its_gate_on_a_busy_gpu_and_passes_with_the_flag(too
     r = _run(["bash", f"scripts/{tool}", *argv, "--allow-busy-gpu", "take-effect test"], env)
     assert r.returncode == 97, (r.returncode, r.stderr[-2000:])
     assert "BUSY-GPU OVERRIDE" in r.stderr
+
+
+def test_python_module_arena_stops_at_its_gate_and_passes_with_the_flag(tmp_path):
+    env = _env(tmp_path)
+    cmd = [sys.executable, "-m", "chess_anti_engine.arena", "--device", "cuda"]
+    r = _run(cmd, env)
+    assert r.returncode == 8, (r.returncode, r.stderr[-3000:])
+    assert "gpu_gate: chess_anti_engine.arena: REFUSED: GPU memory.used 30000 MiB" in r.stderr, r.stderr[-3000:]
+    r = _run([*cmd, "--allow-busy-gpu", "take-effect test"], env)
+    assert r.returncode == 97, (r.returncode, r.stderr[-3000:])
+    assert "BUSY-GPU OVERRIDE" in r.stderr
+
+
+def test_simple_rl_loop_run_creates_nothing_before_its_gate():
+    assert not (REPO / "take-effect-run-never-created").exists()
+
+
+def test_bench_pipeline_reaches_no_cuda_init_before_its_gate(tmp_path):
+    """Review finding: ``torch.cuda.is_available()`` at import ran cuInit (and holds /dev/dxg on WSL2)
+    before the gate. A ``torch.cuda`` stub records any call; PYTORCH_NVML_BASED_CUDA_CHECK is unset."""
+    stub = tmp_path / "stub"
+    stub.mkdir()
+    (stub / "sitecustomize.py").write_text(
+        "import sys, torch\n"
+        "def _rec(name):\n"
+        "    def f(*a, **k):\n"
+        "        print(f'cuda-stub: {name} reached', file=sys.stderr, flush=True)\n"
+        "        raise SystemExit(55)  # stop here: the stub never lets the tool run on\n"
+        "    return f\n"
+        "for _n in ('is_available', 'init', 'device_count', '_lazy_init'):\n"
+        "    setattr(torch.cuda, _n, _rec(_n))\n")
+    env = _env(tmp_path)
+    env.pop("PYTORCH_NVML_BASED_CUDA_CHECK")
+    env["PYTHONPATH"] = f"{stub}:{env['PYTHONPATH']}"
+    r = _run([sys.executable, "scripts/bench_pipeline.py"], env)
+    assert r.returncode == 8, (r.returncode, r.stderr[-3000:])
+    assert "REFUSED: GPU memory.used 30000 MiB" in r.stderr
+    refused_at = r.stderr.index("REFUSED")
+    assert "cuda-stub:" not in r.stderr[:refused_at], r.stderr[:refused_at][-2000:]
+    # Positive control: the stub is live, so a pass does reach CUDA init (after the gate).
+    r = _run([sys.executable, "scripts/bench_pipeline.py"], {**env, "CAE_ALLOW_BUSY_GPU": "stub control",
+                                                            "CAE_GPU_GATE_TEST": "0"})
+    assert r.returncode == 55, (r.returncode, r.stderr[-3000:])
+    assert "cuda-stub: is_available reached" in r.stderr, r.stderr[-3000:]
+    # (Outside the test seam, CUDA_VISIBLE_DEVICES= makes the gate pass cpu-only without probing.)
+    assert r.stderr.index("gpu_gate: bench_pipeline: OK") < r.stderr.index("cuda-stub: is_available reached")

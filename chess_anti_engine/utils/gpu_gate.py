@@ -40,16 +40,18 @@ Memory and utilisation cannot see a job that is still loading. During that phase
 is the defence.
 
 **Multi-process launches.** A launcher that starts K GPU processes gates ONCE in the parent. On a
-pass, the gate exports ``CAE_GPU_GATE_PASSED=<pid>:<tool>``. A child whose ancestor chain (read from
-``/proc``, not trusted from the variable) contains that pid passes with ``OK inherited``. A forged or
-stale value in an unrelated process is ignored, and the full check runs.
+pass, the gate exports ``CAE_GPU_GATE_PASSED=<pid>:<tool>`` (``<pid>:<tool>:allowed`` after an override,
+so each child prints the override line too). A child whose ancestor chain (read from ``/proc``, not
+trusted from the variable) contains that pid as a strict ancestor other than init passes with
+``OK inherited``. A forged or stale value, pid 1, or the process's own pid is ignored, and the full
+check runs.
 
 **No-GPU host.** With no ``/dev/dxg`` / ``/dev/nvidia*`` character device AND no ``nvidia-smi``
 on PATH, there is no GPU and so no job to protect: ``OK no-gpu`` (CI, CPU-only hosts). Either one
 present without the other is a broken probe and refuses.
 
 **CPU short-circuit.** A process whose own environment holds exactly ``CUDA_VISIBLE_DEVICES=``
-(empty), or whose resolved device is cpu, cannot reach the card. It passes with ``OK cpu-only``
+(empty), or whose resolved device is exactly ``cpu``, cannot reach the card. It passes with ``OK cpu-only``
 without probing.
 
 Exit codes (CLI and :func:`require_gpu_idle`): 0 pass, 8 refused (with the reason), 2 usage
@@ -88,6 +90,7 @@ FLAG = "--allow-busy-gpu"
 ENV_ALLOW = "CAE_ALLOW_BUSY_GPU"
 ENV_PASSED = "CAE_GPU_GATE_PASSED"
 ENV_TEST = "CAE_GPU_GATE_TEST"
+MARKER_ALLOWED = "allowed"  # suffix on the marker when the parent passed by override
 BASELINE_FILE = "~/chess-artifacts/operations/GPU_IDLE_BASELINE"
 
 IDLE_MARGIN_MIB = 512
@@ -265,6 +268,17 @@ def argv_entry_point(argv: Sequence[str]) -> str | None:
     return None
 
 
+def _is_zombie(pdir: Path) -> bool:
+    """A zombie has released every fd (and its /proc fd dir reads EACCES), so it cannot hold the GPU."""
+    try:
+        for line in (pdir / "status").read_text().splitlines():
+            if line.startswith("State:"):
+                return line.split()[1] == "Z"
+    except (OSError, IndexError):
+        return False
+    return False
+
+
 def _read_status(pdir: Path) -> tuple[int, int] | None:
     uid = ppid = None
     try:
@@ -359,11 +373,16 @@ def probe_processes(seams: Seams, self_pid: int, uid: int) -> tuple[str | None, 
             continue
         pdir = seams.proc_root / str(p)
         argv = _read_nul(pdir / "cmdline")
-        if not argv:
-            continue  # exited, zombie or kernel thread
+        if argv is None:
+            continue  # exited mid-scan
+        # An empty cmdline (a process that rewrote its argv) is still fd-scanned: a name-less process
+        # holding the GPU must not pass by hiding its name. Only a zombie (State: Z, no fds) is skipped.
+        if not argv and _is_zombie(pdir):
+            continue
         checked += 1
-        shown = " ".join(argv)[:200]
-        hit = argv_entry_point(argv)
+        shown = " ".join(argv)[:200] if argv else "<empty cmdline>"
+        exe = argv[0] if argv else ""
+        hit = argv_entry_point(argv) if argv else None
         if hit:
             if _cpu_only_environ(_read_nul(pdir / "environ")):
                 notes.append(f"pid {p} ({hit}) runs with CUDA_VISIBLE_DEVICES= (empty): exempt from the argv clause")
@@ -375,8 +394,8 @@ def probe_processes(seams: Seams, self_pid: int, uid: int) -> tuple[str | None, 
         except FileNotFoundError:
             continue  # exited mid-scan
         except OSError as exc:
-            if argv[0] in FD_UNREADABLE_ALLOW:
-                notes.append(f"pid {p} ({argv[0]}) is allowlisted; its fds were not read")
+            if exe in FD_UNREADABLE_ALLOW:
+                notes.append(f"pid {p} ({exe}) is allowlisted; its fds were not read")
                 continue
             return (f"cannot read the fds of pid {p} ({shown[:120]}): {exc}; its GPU use cannot be checked",
                     "process scan: unreadable fds", notes)
@@ -386,8 +405,8 @@ def probe_processes(seams: Seams, self_pid: int, uid: int) -> tuple[str | None, 
             except FileNotFoundError:
                 continue  # fd closed mid-scan
             except OSError as exc:
-                if argv[0] in FD_UNREADABLE_ALLOW:
-                    notes.append(f"pid {p} ({argv[0]}) is allowlisted; its fds were not read")
+                if exe in FD_UNREADABLE_ALLOW:
+                    notes.append(f"pid {p} ({exe}) is allowlisted; its fds were not read")
                     break
                 return (f"cannot read fd {fd.name} of pid {p} ({shown[:120]}): {exc}; its GPU use cannot be checked",
                         "process scan: unreadable fds", notes)
@@ -428,8 +447,8 @@ def check(
     if not tool or not tool.strip():
         raise GateUsageError("tool name is empty")
     test_mode = env.get(ENV_TEST) == "1"
-    if (device is not None and not str(device).startswith("cuda") and str(device) not in ("auto", "")
-            and not test_mode):
+    # Only an exact "cpu" device skips; anything else ("0", "gpu", "mps", "cuda:1", "auto") is probed.
+    if device is not None and str(device) == "cpu" and not test_mode:
         return GateDecision(EXIT_OK, "OK cpu-only", notes=[f"device {device}"])
     if env.get("CUDA_VISIBLE_DEVICES", None) == "" and not test_mode:
         return GateDecision(EXIT_OK, "OK cpu-only", notes=["CUDA_VISIBLE_DEVICES is empty"])
@@ -444,17 +463,23 @@ def check(
             table = process_table(seams.proc_root)
             lineage = ancestors(self_pid, table)
         except OSError:
-            lineage = {self_pid}
-        if head.isdigit() and int(head) in lineage:
-            return GateDecision(EXIT_OK, "OK inherited", notes=[f"{ENV_PASSED}={passed} names an ancestor"], marker=passed)
-        notes.append(f"{ENV_PASSED}={passed!r} does not name an ancestor of pid {self_pid}: ignored")
+            lineage = set()
+        # A strict ancestor other than init: pid 1 is every process's ancestor and the process's own pid
+        # proves nothing, so neither may stand in for a gate that ran in a parent.
+        if head.isdigit() and int(head) > 1 and int(head) != self_pid and int(head) in lineage:
+            inherited = [f"{ENV_PASSED}={passed} names an ancestor"]
+            if passed.endswith(":" + MARKER_ALLOWED):
+                inherited.append(f"overridden: inherited from the parent gate ({ENV_PASSED}={passed}); "
+                                 f"the parent passed with {FLAG}")
+            return GateDecision(EXIT_OK, "OK inherited", notes=inherited, marker=passed)
+        notes.append(f"{ENV_PASSED}={passed!r} does not name a strict non-init ancestor of pid {self_pid}: ignored")
     if for_pid is not None:
         try:
             lineage = ancestors(self_pid, process_table(seams.proc_root))
         except OSError:
             lineage = set()
-        if for_pid not in lineage:
-            raise GateUsageError(f"--for-pid {for_pid} is not an ancestor of the gate (pid {self_pid})")
+        if for_pid <= 1 or for_pid == self_pid or for_pid not in lineage:
+            raise GateUsageError(f"--for-pid {for_pid} is not a strict non-init ancestor of the gate (pid {self_pid})")
     smi = seams.nvidia_smi or _run_smi
     smi_present = seams.nvidia_smi is not None or shutil.which("nvidia-smi") is not None
     rdevs = seams.gpu_rdevs() if seams.gpu_rdevs is not None else gpu_device_rdevs(seams.dev_root)
@@ -478,7 +503,7 @@ def check(
         return GateDecision(EXIT_OK, "OK", notes=[*notes, "; ".join(seen)], marker=marker)
     if reason is not None:
         notes.append(f"overridden: reason={reason!r}; saw: {'; '.join(reasons)}")
-        return GateDecision(EXIT_OK, "OK allowed", reasons=reasons, notes=notes, marker=marker)
+        return GateDecision(EXIT_OK, "OK allowed", reasons=reasons, notes=notes, marker=f"{marker}:{MARKER_ALLOWED}")
     return GateDecision(EXIT_REFUSED, "REFUSED", reasons=reasons, notes=notes)
 
 
