@@ -318,6 +318,7 @@ seed buys nothing. The shared seed is kept only so that both arms play the same 
 - Caveat: the update counts still differ (2,956 vs 5,151), because the ceiling forbids more passes.
 - The pin has no exactly-twice-per-row mode for one collection (`--presentations` counts generations). The mechanism
   is specified and tested in the addendum that registers the control.
+- **Registered in "Conditional control addendum" at the end of this record** (mechanism, seed, checkpoints, gates).
 
 ## Confounds (named, not removed)
 
@@ -687,3 +688,127 @@ A screen stop ends the run ≈ 3.0 h after launch.
 7. **The bare `./scripts/lint.sh` exits 1 in the PR worktree,** on 6 errors and 1 warning in files this PR does not
    touch. The worktree uses the live venv. The errors are unresolved imports of `zstandard` and `msgspec`, which that
    venv lacks, and one torch-stub argument type. Ruff passes. This PR changes Markdown only, and CI's lint is its gate.
+
+## Conditional control addendum (registered before any control launch)
+
+**Status: registration, for non-author review.** Nothing of the control is launched. It launches only after this
+addendum merges, and after its launcher PR is reviewed and merged.
+
+**The trigger fired.** The primary read "improves", so the registered control runs. The readings are from the finished
+bank's verdicts, `~/chess-artifacts/operations/rl-run1-volume/verdicts.json` [`fab91794d932`]:
+- kC vs the parent: +5.08 Elo [+0.48, +9.67] (score excess 0.00730, SE 0.00337, 3,200 opening clusters);
+- fresh k1 vs the parent: −5.13 [−9.47, −0.79];
+- kC vs the SL base: +8.52 [+4.00, +13.05];
+- the slope contrast passes (Δ̂ 0.01469, lower one-sided bound 0.00706 > 0).
+
+### Decisions (the coordinator's, recorded as registered)
+
+| Gap | Decision |
+|---|---|
+| G1 mechanism | **(a)**: one phase, one shuffled exact-once pass over the gen2 collection **copied twice**, with one continuous optimizer state and 2,956 planned updates from the pin's own plan. Both copies keep their game id, so the pin's game-hash hold-out puts them on the same side. The fallback was (b-continue): two sequential passes, a fresh permutation, `optimizer_state=continue`. (b-fresh) and sampling with replacement were excluded. **(a) was feasible (below), so the fallback is not used.** |
+| G2 training seed | 2026112602 (the pool seed and `--seed`; the batch plan is the pin's `seed_for(2026112602, "train", 1)`) |
+| G3 mirror | an independent 0.5 coin per presentation (the trainer's default, as in the primary). Two presentations are two views; mirrors are not extra views |
+| G4 checkpoints and recal | snapshots at 1,478 and 2,956. Fits at 1,478, 2,956 and the final (the final is the 2,956-update net). R1 = this record's fixed box at every fit. R2: \|ln T_2956 − ln T_1478\| ≤ 0.10 and \|b_2956 − b_1478\| ≤ 0.10. A miss writes `HOLD_RECAL`. `--collect-dir` = gen2's sealed collection, `rl-run1-gen2/gen2/collect/gen_0001/collect/`, with `--holdout-frac 0.05` by game |
+| G5 screen | none: all 12,800 games on seed 2026112611, resumable per seat as in the primary |
+
+### Mechanism (a): what was checked, and the observation that decided it
+
+The branch point was whether the pin accepts a collection in which every game id appears twice. The pin is fixed, so
+everything had to work through the pool tool alone. Every check below ran on CPU at the pin `0c795fb7a`, inside a
+private mount namespace with `/dev/dxg` covered and `CUDA_VISIBLE_DEVICES` empty.
+
+**The tool.** `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/tools/pool_collect.py` [`d2d55334cf59`] is the volume bank's `pool_collect.py` (sha256
+`66e2225c2006…`) with only these changes:
+- one cell, `c2x` = (gen2, gen2): a bank listed twice is copied twice, in order;
+- P4 allows a repeated game id or opening only between copies of the same bank. Between different banks it still
+  refuses, and so does a repeat inside one copy;
+- `POOL_SEED` = 2026112602;
+- the pool block records the copies.
+
+**On the real gen2 bank** (read only; `~/chess-artifacts/operations/rl-run1-gen2/gen2/collect/gen_0001/collect/manifest.json` [`778b7ecd7f4d`]):
+- The tool built the doubled pool: 16,000 games, 1,592,682 rows (2 × 796,341), 84 shards. Log
+  `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/pool.log` [`49569cf56fe6`]; manifest `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/pool_c2x/gen_0001/collect/manifest.json` [`30ad968c9762`].
+- **The pin's own plan and acceptance**, through the volume bank's `planned_updates.py --precheck` with the control's
+  flags (`~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/plan.json` [`56183379a1ce`]):
+  - `precheck_source` accepted the pool;
+  - `planned_phase_updates` = **2,956**;
+  - `phase_train_rows` = **1,513,422** (2 × gen2's 756,711);
+  - the snapshot plan [1478, 2956] fits.
+- **The pin's `reference_collect` sealed a reference to the pool, and lineage `verify_stage` accepted it.** The
+  loader's shard list through the reference is the pool's 84 shards (`~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/ref_check.json` [`1605ce080605`],
+  script `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/tools/ref_check.py` [`03d2ae221523`]).
+- **Exactly twice, counted from the pin's plan** (`~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/tools/double_check.py` [`1eb6606d784c`] `plan`; result
+  `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/plan_twice.json` [`eda3a8408137`]). Row ids are rebuilt as `learn.load_window` builds them, and the batch
+  plan is the pin's `learn.plan_batches` with the pin's seed.
+  - The two halves' meta sidecars are equal, in order.
+  - **No game id is on both sides of the hold-out.**
+  - The distinct position keys (game id, ply index) are exactly half the rows.
+  - The plan is a permutation of the trainable rows, in 2,956 batches = the planned updates.
+  - **Every one of the 756,711 trainable positions is in the plan exactly twice** (histogram {2: 756,711}). The 39,630
+    held-out positions are in it never.
+- **That rebuild is the pin's real order, not a model of it.** `double_check.py validate` on generation 2's finished
+  arm: the rebuilt plan's rows, in order, equal its `presented.npz`, and the seed equals its recorded `seeds.train`
+  (`~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/validate_gen2.json` [`1f5836b55556`]).
+
+**End to end through the real trainer and its ledger** (CPU, a tiny model, the pin's own test fixtures, as the volume
+bank's resume test; `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/tools/ctl_e2e_test.py` [`fcdb483eb6b2`], log `~/chess-artifacts/operations/rl-run1-volume-control.staging/feas/e2e_unmutated.log`
+[`8bed876d783b`], 15/15):
+- the real tool built `c2x` from a tiny gen2 (its `ACTOR` constant set to the tiny parent);
+- one `simple_rl_loop.py run --collect-from` phase exited 0, with realised updates = the pin's planned updates;
+- the trainer's own `presented.npz` (the consumer's record, not the plan) shows every trainable position exactly twice;
+- the rebuilt plan equals the realised order;
+- **mutant:** the same phase on the single-copy source fails the ledger check.
+- The tiny run held out no game. The hold-out side is shown by the real-pool plan check above (39,630 held positions,
+  0 presentations, no shared game id).
+
+**Deciding observation:** the pin keys its presentation ledger by (generation, row index), never by game id
+(`learn.load_window`, `presentation_counts`). It keys the hold-out by game id alone (`holdout_mask`). And
+`reference_collect` / `precheck_source` check sealed sha256s and settings, not id uniqueness. So duplicated ids pass
+every pin check, and the copies stay on one side of the hold-out. This was observed above, not assumed.
+
+### The control, exactly
+
+- **Pool:** `pool_c2x`, built by the launcher's pool step in a new bank, `rl-run1-volume-control/` beside the
+  finished one (it does not exist yet), from the gen2 bank. It is read back over every shard, and the pool step also passes `double_check.py plan`. A miss
+  is a refusal, not a HOLD.
+- **Train:** `gen1_baked.pt` (parent), one `simple_rl_loop.py run --collect-from pool_c2x --generations 1` phase.
+  - Flags: the volume flags file with only `--seed 2026112602` and `--games 16000` changed (TRAIN and ZQ
+    byte-identical: `--presentations 1`, mirror 0.5, batch 512, LR 3e-6 flat, no warm-up, Aurora, fresh optimizer
+    state, hold-out 0.05).
+  - `--snapshot-updates 1478,2956`.
+  - Gates after training, each a `HOLD_TRAIN_CHECK` on a miss: the optimizer take-effect rule; realised updates = the
+    pin's planned updates (2,956); **`double_check.py ledger` on the trainer's `presented.npz`** (every trainable
+    position exactly twice, held-out never).
+- **Host RAM:** the record's rule. The launch-time floor is the loaded-array footprint measured on the staged `c2x`
+  pool, plus 12 GiB margin, plus 2 GiB for the trainer. The watchdog and the snapshot resume are unchanged. The launcher
+  PR quotes the measured number.
+- **GPU memory:** the 3-update smoke on the pool, generation 2's abort fraction 0.85.
+- **Fits and bounds:** as G4. **Bake:** the final net only.
+- **Match:** `ctl_vs_g1`, the control's baked net vs `gen1_baked.pt`, 12,800 games (6,400 per seat), seed
+  2026112611, matched sims 64 v 64, the same book, no screen, per-seat resume.
+
+### Readings it licenses (the estimator of this record, unchanged)
+
+- **Control vs the parent:** improves iff LB95 > 0; damage iff UB95 < 0; adoptable iff LB95 > −10; otherwise unread.
+- **Attribution contrast, registered in the record and computed here:** Δ̂_PC = d̄_kC − d̄_C on the score scale, with
+  SE = √(SE_kC² + SE_C²). d̄_kC and SE_kC are the banked kC-vs-parent result
+  (`~/chess-artifacts/operations/rl-run1-volume/arenas/kC_vs_g1/pool.json` [`f60ec7ca7d72`]). **kC is not replayed.**
+  - **"Distinct rows beat repeated rows" iff Δ̂_PC − 1.645·SE > 0, strictly.** Otherwise attribution is unread.
+  - A split of significance (one arm improves, the other does not) is not a difference and licenses nothing about
+    attribution.
+- **Caveats, stated:** the update counts still differ (2,956 vs 5,151); the batch plan differs (seed); the control's
+  rows are a subset of kC's pool (gen2's rows).
+- The verdict is recorded in the same session as the readout, by these rules.
+
+**GPU time** (measured rates, as above):
+
+| Item | GPU-h |
+|---|---:|
+| smoke + train (2,956 × 0.3164 s) | ≈ 0.3 |
+| 3 fits + bake + verify | ≈ 0.3 |
+| `ctl_vs_g1`, 12,800 games | ≈ 2.9 |
+| **total** | **≈ 3.5** |
+
+**Recovery:** everything is written under the new bank. The finished volume bank and the gen2 bank are read only,
+pinned by sha256. Training resumes in place from its newest snapshot, and the match resumes per seat, as in the
+primary.
