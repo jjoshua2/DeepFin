@@ -1355,6 +1355,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "(weights-as-updatable-constants, max-autotune)."
         ),
     )
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument
+    add_allow_busy_gpu_argument(p)
     p.add_argument(
         "--config",
         type=Path,
@@ -1460,6 +1462,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_arg_parser().parse_args(list(argv) if argv is not None else None)
+    # GPU launch gate (docs/operations.md): AOT compilation and verification run on the GPU.
+    from chess_anti_engine.utils.gpu_gate import require_gpu_idle
+    require_gpu_idle("build_aot_packages", allow_reason=args.allow_busy_gpu)
 
     if args.verify_only:
         args.verify = True

@@ -60,6 +60,10 @@ class PbtStrictCleanup(unittest.TestCase):
         if name == "watchdog_pbt.sh" and os.environ.get("PBT_WATCHDOG_SOURCE"):
             source = Path(os.environ["PBT_WATCHDOG_SOURCE"])
         shutil.copyfile(source, path)
+        # The GPU launch gate is stubbed: it logs and passes (prints no marker), so the benchmark's
+        # own children stay the only python3 calls. The real gate is tested in tests/test_gpu_gate*.py.
+        gate = self.root / "scripts" / "gpu_gate.sh"
+        gate.write_text('#!/bin/bash\nprintf "gate %s\\n" "$*" >> "$SPY_LOG"\n', encoding="utf-8")
         # The copied benchmark owns only an inert python3 spy. Observe kill
         # without signalling; wait reaps that spy in its owning fixture shell.
         body = (
@@ -85,6 +89,9 @@ class PbtStrictCleanup(unittest.TestCase):
         assert all(pid.isdecimal() and int(pid) > 0 for pid in killed)
         assert self.calls("ray ") == ["ray stop --force"] * count
         assert len(self.calls("python")) == count
+        # gated once, before the first child
+        assert self.log.read_text().splitlines()[0].startswith("gate --tool bench_batch_wait --for-pid ")
+        assert len(self.calls("gate ")) == 1
         assert list(self.root.glob("bench_batch_wait.*.yaml")) == []
         assert "use_compile: true" in self.config.read_text()
 
@@ -104,7 +111,9 @@ class PbtStrictCleanup(unittest.TestCase):
         self.env["BENCH_BATCH_WAIT_CONFIG"] = str(self.root / "missing.yaml")
         result = self.run_fixture("bench_batch_wait.sh")
         assert result.returncode != 0
-        assert not self.log.exists()
+        # nothing but the (stubbed) GPU launch gate ran: no python child, no ray stop, no kill
+        lines = self.log.read_text().splitlines() if self.log.exists() else []
+        assert all(line.startswith("gate ") for line in lines), lines
         assert list(self.root.glob("bench_batch_wait.*.yaml")) == []
 
     def monitor_fixture(self, status: int) -> subprocess.CompletedProcess[str]:

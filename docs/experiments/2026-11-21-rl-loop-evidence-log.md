@@ -37,6 +37,7 @@ previous citation.
 | `RC/` | `~/chess-artifacts/operations/rl-claude-20261119` |
 | `R/` | `~/chess-artifacts/operations/rl-run1-pilot` |
 | `F/` | `~/chess-artifacts/operations/rl-run1-followup` |
+| `RFW/` | `~/chess-artifacts/operations/rl-run1-root-full-width` |
 | `WK/` | `~/chess-artifacts/operations/rl-week-one-20261112-v1` |
 | `V/` | `~/chess-artifacts/operations/rl-run1-value-anchor` |
 | `G2/` | `~/chess-artifacts/operations/rl-run1-gen2` |

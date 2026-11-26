@@ -1177,6 +1177,109 @@ quoting an absolute number.
 ΔH ≈ 0 in the **prior** column means the knob is being dropped between the CLI
 and the search — find where before reporting any number from that run.
 
+## GPU launch gate
+
+Agent tools and benchmarks that put work on the GPU first call one shared gate
+(`chess_anti_engine/utils/gpu_gate.py`; shell launchers call `scripts/gpu_gate.sh`). It exists to
+stop **accidental** GPU launches beside a running GPU job: on 2026-11-21 an agent-run launcher
+reached the GPU beside a live job twice, and out-of-memory in the live job is the failure that has
+happened. **It is not a security control.** It cannot authenticate anyone, and it is meant to be
+cheap to pass deliberately and impossible to pass by accident.
+
+**What it checks.** This is the operator GPU check's rule. Every probe fails closed.
+
+- `nvidia-smi --query-gpu=memory.used`: every line is at most the idle ceiling.
+  - The ceiling is `idle_mib + 512`, read from `~/chess-artifacts/operations/GPU_IDLE_BASELINE`
+    (one token `idle_mib=<MiB>`, at most 4,096) when that file exists.
+  - Otherwise it is 3,894 MiB: the largest idle reading banked on this machine (3,382 MiB) plus
+    512. The derivation is in the code.
+  - A refusal prints the measured value and the ceiling.
+  - `--query-compute-apps` is not used. Under WSL2 it does not list another process tree.
+- `nvidia-smi --query-gpu=utilization.gpu`: 5 samples one second apart, maximum < 10 %.
+- A process scan of your own processes. The caller's ancestors and descendants are excluded, so a
+  second copy of the same launcher still refuses. A process counts as busy when:
+  - its argv names a GPU entry point (`chess_anti_engine/utils/gpu_entry_points.py`, or any
+    `python -m chess_anti_engine.*`). Exemption, for this clause only: its exec environment holds
+    exactly `CUDA_VISIBLE_DEVICES=` (empty);
+  - it holds the GPU device open (`/dev/dxg` or `/dev/nvidia*`, matched by rdev);
+  - its fds cannot be read. A process with an empty command line is still fd-scanned; only a
+    zombie (`State: Z`, which holds no fds) is skipped.
+
+The live run counts as busy. `scripts/train.sh` and everything it starts never call the gate.
+
+**Passes without probing:**
+
+- **Cpu-only.** The tool's own environment holds `CUDA_VISIBLE_DEVICES=` (empty), or the
+  resolved device is exactly `cpu`. Any other device string (`0`, `gpu`, `mps`, `auto`, `cuda:1`)
+  is probed.
+- **No-gpu.** The host has neither a GPU device node nor `nvidia-smi`.
+- **Inherited.** A child of a launcher that already passed. The parent exports
+  `CAE_GPU_GATE_PASSED=<pid>:<tool>`, and the child verifies through `/proc` that the pid is a
+  strict ancestor other than init. A marker naming pid 1 or the child's own pid is ignored, and
+  `--for-pid` refuses both. A launcher that starts K GPU processes therefore gates once, and the
+  children do not refuse each other. When the parent passed by override, the marker is
+  `<pid>:<tool>:allowed`, and each child prints the loud override line too.
+
+**The override** is the per-invocation flag `--allow-busy-gpu "<reason>"`. The reason is required
+and non-empty, and the gate prints one loud stderr line with the reason and what it saw. Wrappers
+that cannot pass flags use the environment twin `CAE_ALLOW_BUSY_GPU="<reason>"`. Use it for:
+
+- the owner's engine checks beside training ("GPU use OK for engine checks");
+- arenas inside an operator pause window.
+
+**Agents may not pass it.** That is a rule in their briefs, not a mechanism.
+
+Exit codes: 0 pass, 8 refused (with the reason), 2 usage error (an empty reason). In a shell
+launcher, before the first GPU child:
+
+```bash
+_gate=$(bash scripts/gpu_gate.sh --tool NAME --for-pid $$ ${ALLOW_BUSY[@]+"${ALLOW_BUSY[@]}"}) || exit $?
+[ -z "$_gate" ] || export "$_gate"
+```
+
+**The most likely benign refusal** is a process of yours holding `/dev/dxg` while doing no GPU
+work: a CPU-only pytest that imported torch without `CUDA_VISIBLE_DEVICES=` (empty), or an
+`nvidia-smi -l` / `nvtop` monitor. The refusal names the pid and its command line. Stop that process,
+or run your CPU work with `CUDA_VISIBLE_DEVICES=` (empty).
+
+**Experiment banks and other launchers that run their own guard** should hand the pass on, so their
+gated children (arenas, `lc0_control_train.py`) do not refuse the parent's own GPU memory. Right
+after the bank's own guard passes:
+
+```bash
+export CAE_GPU_GATE_PASSED=$$:<bank-name>
+```
+
+The variable must name the bank's own shell (`$$`), so the children can verify it as an ancestor.
+
+Gated today:
+
+- `arena_standard.py`;
+- `match_vs_uci.py`: the harness only, never the engine (`chess_anti_engine.uci` / `deepfin`);
+- `match_checkpoints.py`, `match_vs_handicapped_sf.py`, `lc0_control_train.py`;
+- `bench_uci_engine.py`, `uci_prewarm.py`, `tcec_autotune.sh`;
+- the HIGH `bench_*` / `profile_*` tools, `bench_batch_wait.sh`;
+- `train_bootstrap.py`, `e2e_strength_test.py`;
+- `factorial_prepare_and_train.py`: at startup, and again right before training A, with a bounded
+  900 s wait;
+- `python -m chess_anti_engine.arena`, `build_aot_packages.py`, `validate_time_mgmt.py`;
+- `simple_rl_loop.py run`. It gates once at start, then trains in-process, and its arena child
+  inherits the pass. Its single-stage subcommands (`collect`, `train`, `evaluate`) are not gated:
+  owners drive them under their own guards.
+
+Every other GPU script is named, with a reason, in `tests/gpu_gate_ungated.py`: live-run
+infrastructure, owner-run research launchers, pinned launchers, and MEDIUM agent tools. Ungated
+parents that start gated children:
+
+- `bt4_confirmation.py`, `bt4_direct_screen.py`, `bt4_one_epoch_screen.py`,
+  `combined_corpus_train.py`. Checked: the parent imports no torch and runs one child at a time from
+  its pinned runtime, so a gated child does not see a busy parent.
+- `run_host_overlap_pair.py` starts two trainings at once by design, so a gated second trainer
+  would refuse the first. Its own SHA-256 pins it. A plan that runs gated trainers must re-pin it so
+  that it exports `CAE_GPU_GATE_PASSED=$$:run_host_overlap_pair` first.
+
+`tests/test_gpu_gate_coverage.py` keeps this list, and the entry-point list, true to the code.
+
 ## Static analysis
 
 Choose validation scope using [development guidance](development.md#validation-by-change-scope).

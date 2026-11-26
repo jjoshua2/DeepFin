@@ -144,7 +144,11 @@ def main():
     ap.add_argument("--sf-nodes", type=int, default=5000)
     ap.add_argument("--stockfish-path", default="stockfish")
     ap.add_argument("--bootstrap", default="")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(ap)
     args = ap.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("bench_multi_worker", allow_reason=args.allow_busy_gpu, device=None)
 
     mp.set_start_method("spawn", force=True)
 

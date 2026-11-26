@@ -204,7 +204,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(parser)
+    args = parser.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("uci_prewarm", allow_reason=args.allow_busy_gpu, device=None if args.devices else args.device)
 
     multi = bool(args.multi_gpu_pucv or (args.devices and "," in args.devices))
     print(

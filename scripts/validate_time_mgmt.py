@@ -390,10 +390,15 @@ def main() -> int:
                         "min time left at game end, for tuning the time curve / end-clock.")
     p.add_argument("--dry-run", action="store_true",
                    help="print the match commands without running them (no GPU needed)")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(p)
     args = p.parse_args()
 
     if not args.candidate:
         p.error("at least one --candidate config is required")
+    if not args.dry_run:
+        # GPU launch gate (docs/operations.md). The match_vs_uci children inherit the pass marker.
+        require_gpu_idle("validate_time_mgmt", allow_reason=args.allow_busy_gpu, device=args.device)
     baseline_knobs = parse_knobs(args.baseline)
     for spec in args.candidate:
         parse_knobs(spec)  # validate all up front so a typo fails before any game

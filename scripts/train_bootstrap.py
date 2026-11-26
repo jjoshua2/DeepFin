@@ -46,7 +46,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=1024, help="Batch size")
     parser.add_argument("--loaders", type=int, default=16, help="Number of parallel loader threads")
     parser.add_argument("--out", type=str, default="data/bootstrap/bootstrap_net_v2.pt", help="Output checkpoint path")
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(parser)
     args = parser.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("train_bootstrap", allow_reason=args.allow_busy_gpu, device=None)
 
     cfg = load_yaml_file(args.config)
     flat = flatten_run_config_defaults(cfg)

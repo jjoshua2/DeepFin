@@ -147,7 +147,11 @@ def main():
     ap.add_argument("--work-dir", default="/tmp/e2e_strength_validation")
     ap.add_argument("--device", default=None)
     ap.add_argument("--seed", type=int, default=42)
+    from chess_anti_engine.utils.gpu_gate import add_allow_busy_gpu_argument, require_gpu_idle
+    add_allow_busy_gpu_argument(ap)
     args = ap.parse_args()
+    # GPU launch gate (docs/operations.md): refuse beside a running GPU job unless --allow-busy-gpu.
+    require_gpu_idle("e2e_strength_test", allow_reason=args.allow_busy_gpu, device=args.device)
 
     if args.games_per_iter <= 0:
         raise SystemExit("--games-per-iter must be > 0")
