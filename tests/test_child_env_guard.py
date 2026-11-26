@@ -17,8 +17,10 @@ binding) in the same function to one. A launch counts as starting python when it
 ``taskset`` wrapper and that wrapper's options (``-n 10``, ``30``, ``5s``,
 ``A=1``, a ``0x1`` mask, a ``0-3`` CPU list, and the word after an option
 that takes one: ``env -u X``, ``timeout -s KILL``, ``stdbuf -o L``), is ``sys.executable`` (any
-``.executable`` attribute) or a ``python*`` literal; a single string (the
-``shell=True`` form) counts when its first word is one.
+``.executable`` attribute) or a ``python*`` literal; a single string counts
+when its first word is one under ``shell=True``, when the whole string is a
+python path under ``shell=False`` (the default: spaces belong to the path),
+and when either holds for a non-constant ``shell=``.
 
 FAIL CLOSED. An env passes only when the guard positively resolves its
 state at the launch; anything it cannot is REPORTED as "cannot be resolved".
@@ -47,8 +49,9 @@ What resolves (the allow-list):
   (``e2 = env``), an unpacking / ``for`` / ``with`` / walrus / comprehension
   target, passing it to any other call (``fix(env)``), a mutator inside an
   expression (``if env.pop(...)``), any other method (``popitem``,
-  ``__setitem__``), or a use inside a nested function, lambda or
-  comprehension.
+  ``__setitem__``), a use inside a nested function, lambda or
+  comprehension, or a binding with no name node (a ``match`` capture,
+  ``except ... as env``, ``import ... as env``, ``global`` / ``nonlocal``).
 * Order: changes are applied in source order up to the launch, and only when
   they certainly ran exactly once before it: earlier in the same block, or
   inside a ``with`` body or a ``finally`` block that precedes it. A change in
@@ -59,7 +62,9 @@ What resolves (the allow-list):
   first), as is one after the launch outside any loop.
 * Values: constant writes and removals of the two variables are tracked on
   EVERY env (inherited and ``gpu_free_env`` ones too); a write through a
-  non-constant key reports both as "may be overwritten".
+  non-constant key reports both as "may be overwritten", and a later
+  ``setdefault`` of one keeps it uncertain. A merge (``update``, ``|``,
+  ``**``) leaves a key the source lacks as it was.
 
 Two more rules: in a function that starts any child (or a multiprocessing
 process, or a shell), an unsafe change to ``os.environ`` -- a required
@@ -238,13 +243,22 @@ class _Env:
         """``self`` updated from ``other`` (``{**self, **other}``)."""
         if other.parameter is not None:
             raise _Unresolved(f"merges {other.parameter}, a parameter whose keys are unknown")
-        if other.inherited:  # every key of os.environ overrides what was there
-            for key in _REQUIRED:
+        for key in _REQUIRED:
+            theirs = other.values.get(key, _MISSING)
+            if theirs is _REMOVED:
+                # absent from the source: dict.update leaves the destination's value as it
+                # was. If the result now inherits, a key this env never had is still absent.
+                if other.inherited and not self.inherited and key not in self.values:
+                    self.values[key] = _REMOVED
+            elif theirs is not _MISSING:
+                self.values[key] = theirs
+                self.maybe.discard(key)
+            elif other.inherited:  # every key of os.environ overrides what was there
                 self.values.pop(key, None)
-            self.maybe -= _REQUIRED
-            self.inherited = True
-        self.values.update(other.values)
-        self.maybe = (self.maybe - set(other.values)) | other.maybe
+                self.maybe.discard(key)
+        self.values.update({k: v for k, v in other.values.items() if k not in _REQUIRED and v is not _REMOVED})
+        self.maybe |= other.maybe
+        self.inherited = self.inherited or other.inherited
 
     def set(self, key: ast.expr | str, value: ast.expr | None) -> None:
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
@@ -353,6 +367,23 @@ class _Scan:
         if isinstance(ep, ast.If) and {ef, af} == {"body", "orelse"}:
             return "never"  # the other branch of an if that holds the launch
         raise _Unresolved(f"changed in the {ef} of a {type(ep).__name__} whose {af} holds the launch")
+
+
+def _binds_without_a_name_node(node: ast.AST, name: str) -> bool:
+    """Bindings whose target is a string field, not an ``ast.Name``: a match
+    capture (``case {'k': env}``, ``case [*env]``, ``case {**env}``),
+    ``except E as env``, ``import x as env`` and ``global`` / ``nonlocal``."""
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    if isinstance(node, ast.ExceptHandler):
+        return node.name == name
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".")[0]) == name
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    return False
 
 
 class _Resolver:
@@ -489,6 +520,9 @@ class _Resolver:
         through `value`, which bounds the depth.)"""
         own: list[ast.Name] = []
         for node in ast.walk(scope):
+            if _binds_without_a_name_node(node, name):
+                raise _Unresolved(f"{name} is bound by a {type(node).__name__} (match capture, except-as, "
+                                  "import or global/nonlocal)")
             if isinstance(node, ast.Name) and node.id == name:
                 owner = node
                 while owner is not scope and not isinstance(
@@ -549,7 +583,12 @@ class _Resolver:
                         env.values.get(const, _MISSING) not in (_MISSING, _REMOVED)
                         or (env.inherited and const not in env.values))
                     if not present:
+                        # a non-constant-key write may already have set it: setdefault
+                        # then keeps that unknown value, so the key stays uncertain
+                        uncertain = const is not None and const in env.maybe
                         env.set(key, call.args[1] if len(call.args) > 1 else None)
+                        if uncertain and const is not None:
+                            env.maybe.add(const)
         if env is None:
             raise _Unresolved(f"{name} is not built in the launch's function")
         return env
@@ -676,6 +715,18 @@ def _launch(node: ast.Call, bare: set[str]) -> tuple[ast.expr | None, ast.expr |
     return None
 
 
+def _shell_flag(launch: ast.Call) -> bool | None:
+    """The launch's ``shell=``: a string argv is a command line only when it is
+    true (otherwise the whole string is the program path, spaces included).
+    None when it is not a constant: both readings are checked (fail closed)."""
+    kw = next((k for k in launch.keywords if k.arg == "shell"), None)
+    if kw is None:
+        return False
+    if isinstance(kw.value, ast.Constant):
+        return bool(kw.value.value)
+    return None
+
+
 def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
     """``(line, problems)`` for each python child given a scratch env whose
     GPU-free variables are missing or wrong."""
@@ -695,15 +746,16 @@ def scratch_env_children(source: str) -> list[tuple[int, list[str]]]:
             if launch is None:
                 continue
             argv_node, env_node, command_line = launch
-            shell = False
+            shell: bool | None = False
             if isinstance(argv_node, (ast.Name, ast.List, ast.Tuple)):
                 argv = _resolve_argv(argv_node, nodes)
                 program = _program(argv) if argv is not None else None
             else:
-                program, shell = argv_node, command_line
+                program, shell = argv_node, command_line and _shell_flag(node)
             if argv_node is _PARTIAL:
                 program = _PARTIAL
-            if not _is_python(program, shell=shell):
+            if not (_is_python(program, shell=bool(shell))
+                    or (shell is None and _is_python(program, shell=True))):
                 continue
             try:
                 env = _resolve_env(env_node, node, scope, resolver)
@@ -1077,6 +1129,11 @@ _TABLE_UNSAFE.update({
     "h05_kwargs_parameter": "def _run(**env):\n    subprocess.run([sys.executable], env=env)",
     "h06_method_parameter": "class C:\n    def go(self, env):\n        subprocess.run([sys.executable], env=env)",
     "s2_rebound_to_a_second_name": "def f():\n    e2 = gpu_free_env({})\n    base = {'PATH': '/bin'}\n    e2 = base\n    subprocess.run([sys.executable], env=e2)",
+    # Codex round 3 at 32566f97d
+    "codex5_setdefault_after_dynamic_key": "def f(key):\n    env = {}\n    env[key] = '0'\n    env.setdefault('CUDA_VISIBLE_DEVICES', '')\n    env.setdefault('PYTORCH_NVML_BASED_CUDA_CHECK', '1')\n    subprocess.run([sys.executable], env=env)",
+    "codex6_scalar_python_path_with_a_space": "def f():\n    subprocess.run('/opt/my env/bin/python3', env={})",
+    "codex7_merge_source_lacks_a_key": "def f():\n    env = {'CUDA_VISIBLE_DEVICES': '0'}\n    patch = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    patch.pop('CUDA_VISIBLE_DEVICES')\n    env.update(patch)\n    env.setdefault('CUDA_VISIBLE_DEVICES', '')\n    subprocess.run([sys.executable], env=env)",
+    "codex8_match_capture_rebinds": "def f(x):\n    env = {}\n    env.update(CUDA_VISIBLE_DEVICES='', PYTORCH_NVML_BASED_CUDA_CHECK='1')\n    match x:\n        case {'child_env': env}:\n            pass\n    subprocess.run([sys.executable], env=env)",
 })
 _TABLE_SAFE = {
     's01_safe_literal': "def f():\n    subprocess.run([sys.executable], env={'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'})",
@@ -1087,6 +1144,8 @@ _TABLE_SAFE = {
     's06_dynamic_key_on_complete': "def f(k):\n    env = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    env['X_' + k] = '1'\n    subprocess.run([sys.executable], env=env)",
     's07_copy_of_safe': "def f():\n    base = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    env = dict(base, PATH='/bin')\n    subprocess.run([sys.executable], env=env)",
     's08_or_merge': "def f():\n    env = {'PATH': '/bin'} | OK\n    subprocess.run([sys.executable], env=env)",
+    # the merge fix keeps the destination's safe value for a key the source lacks
+    's09_merge_source_lacks_a_key_dest_safe': "def f():\n    env = {'CUDA_VISIBLE_DEVICES': '', 'PYTORCH_NVML_BASED_CUDA_CHECK': '1'}\n    patch = {'CUDA_VISIBLE_DEVICES': '0', 'X': '1'}\n    patch.pop('CUDA_VISIBLE_DEVICES')\n    env.update(patch)\n    subprocess.run([sys.executable], env=env)",
 }
 _TABLE_DOCUMENTED_FALSE_POSITIVES = {
     "s06_dynamic_key_on_complete",  # a non-constant key may name a required variable
@@ -1100,8 +1159,8 @@ def test_every_adversarial_unsafe_child_is_reported_and_safe_ones_pass() -> None
     assert silent == []
     reported = {k for k, body in _TABLE_SAFE.items() if scratch_env_children(_TABLE_HEADER + body)}
     assert reported == _TABLE_DOCUMENTED_FALSE_POSITIVES
-    assert len(_TABLE_UNSAFE) == 55 + 8 + 7
-    assert len(_TABLE_SAFE) == 8
+    assert len(_TABLE_UNSAFE) == 55 + 8 + 7 + 4
+    assert len(_TABLE_SAFE) == 9
 
 
 def test_a_marked_launch_is_waived_and_only_with_a_reason() -> None:
