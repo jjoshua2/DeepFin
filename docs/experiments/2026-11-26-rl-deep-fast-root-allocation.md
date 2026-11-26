@@ -462,3 +462,77 @@ Outputs: `~/chess-artifacts/operations/rl-deep-fast/stage1/scores/scores.json` [
 - It licenses only this: the registered kill did not fire (estimate +0.315 cp, below +1.2; LB95 −1.50 ≤ 0); the
   interval [−1.50, +2.25] spans zero and does not exclude a deficit larger than seed noise; tail-driven; not evidence
   W80's target is as good or better; says nothing about allocation or strength.
+
+## Stage 2 phase A addendum: collection only (2026-11-26)
+
+Stage 2 is split into two launchers, so the GPU does not wait on the training steps being proven. **Phase A**
+collects and banks; **phase B** (pool, train, fits, bounds, bake, matches, `verdicts3.py` v2) is a separate addendum,
+built while phase A collects. Phase A writes only run dirs, their sealed manifests, per-collect GPU-holder scans and
+the cost files; nothing in it fixes a choice phase B makes.
+
+Bank: `~/chess-artifacts/operations/rl-deep-fast/stage2/`, listed in its own
+`~/chess-artifacts/operations/rl-deep-fast/stage2/SHA256SUMS` [`697b4930`] (the bank's root
+`~/chess-artifacts/operations/rl-deep-fast/SHA256SUMS` [`7945de9c`] is unchanged and is verified too). Launch pin `b0541c15a` (the Stage 0 pin), worktree
+`rl-deep-fast-b0541c15a`.
+
+**Launch condition.** Stage 0 finished (all four legs in `stage0/summary.jsonl`, `stage0/report.json` written) and
+read within the record's cost assumptions, and the coordinator wrote `stage2/PHASE_A_GO`. If Stage 0's report puts D
+outside those assumptions, phase A does not launch and the dose rule is not adjusted; the owner decides.
+
+**Steps** (`~/chess-artifacts/operations/rl-deep-fast/stage2/launch_phase_a.sh` [`7d84b7df`]), each its own process group:
+1. `collect_C`: stock 64 (`--sims 64 --topk 16 --full-prob 1.0`), seed 2026112701, games = round(2.8M ÷ C's Stage 0
+   rows per game).
+2. `collect_D`: `--sims 80 --topk 40 --full-prob 0.25 --fast-sims 16 --root-full-width`, seed 2026112702, games =
+   round(0.85 × H_C × D's Stage 0 steady games per hour), where H_C is `collect_C`'s realised `active_seconds`.
+3. `collect_Dtopup`: if H_D,main < 0.9 × H_C, ceil((H_C − H_D,main) × `collect_D`'s realised games per active hour)
+   games with `collect_D`'s flags, in its own run dir, **seed 2026112802 (2026112702 + 100), disjoint from every
+   main-collect seed**; otherwise it records "not needed" and plays nothing.
+4. `cost`: `prelaunch/cost_from_stats.py` writes `stage2/cost.json` (`active_seconds`, D summed over its collects,
+   `clock_complete`), and `stage2/cost_scan.json` banks every collect's GPU-holder check beside it.
+
+All collects: `--collect-procs 3 --concurrency 128 --eval-chunk-rows 512 --c-scale 0.1 --c-visit 50 --max-plies 450`,
+the production Syzygy pair, actor `kC_baked.pt` (`c48a7b2c…`, refused otherwise). The doses come from
+`~/chess-artifacts/operations/rl-deep-fast/stage2/dose.py` [`ccd39e16`], which reads Stage 0's numbers from
+`stage0/report.json` and the sealed collects' `stats.json`; no Stage 0 number is a constant in the launcher. A collect
+with an incomplete clock (a game-level resume or a kept process) makes `dose.py` refuse.
+
+**Completion check per collect:** the sealed `stats.json` has games equal to the dose and a complete clock, and
+`stage0/row_gates.py` passes on the collect (the arm's budget on every stored row, no fast row stored, and for D the
+prelude and the stored share 0.25 ± 0.02).
+
+**GPU-holder scan.** `~/chess-artifacts/operations/rl-deep-fast/stage2/gpu_holders.py` [`9991af8d`] samples `/proc` every 15 s for the whole collect:
+processes of this user holding the GPU device (matched by rdev, as the guard's scan does), and which of them are
+outside the collect's own session. A collect is **clean** iff no two consecutive samples show a foreign holder (a
+single ~0.1 s `nvidia-smi` probe can land in one sample; two in a row is a co-resident job). **Registered now for
+phase B:** Readout A also reads "unread: cost unmeasured (a co-resident GPU job)" if any of the arms' collects is not
+clean. The scan never fails a collect; it is banked and read at the verdict.
+
+**Resume.** A step is done iff its exit is 0, its check passes and its recorded inputs (launcher, `dose.py`, row gates,
+`stage0/report.json`, actor, pin, its dose file) equal the inputs now; a relaunch skips it. A done step with other
+inputs refuses. An interrupted or failed collect is never resumed in place, because a game-level resume leaves part
+of its clock behind and the cost check would read unread: it refuses until
+`~/chess-artifacts/operations/rl-deep-fast/stage2/clear_phase_a.sh` [`cfce5e18`] moves its run dir and markers aside (never deletes them); the rerun
+plays the same dose and seed.
+
+**Deviations, stated.**
+- **Collect shape:** each Stage 2 collect is one run dir with K = 3 processes (as the generation-2 and data-volume
+  collects), not Stage 0's three K = 1 collects, because phase B trains from one run dir per collect. Stage 0's rate
+  therefore only *estimates* the K = 3 rate. It sizes D's main collect, and any error is absorbed by the registered
+  top-up, sized from the main collect's own realised rate. The equal-cost check itself uses only the real collects'
+  `active_seconds`, so H_C is measured, not projected. The shape is the same for both arms.
+- **Training pin (phase B):** both arms train at `b0541c15a`, one pin for collect and train, so the C-vs-D comparison
+  uses one trainer. `kC_baked.pt` was trained at `0c795fb7a`; absolute numbers here are therefore not comparable with
+  the data-volume run's.
+- **The top-up's openings:** a separate run dir starts a fresh opening permutation, so some top-up openings repeat
+  the main collect's (Confound 10). The phase B pool tool allows and counts these repeats (reported in the pool
+  manifest) and still refuses a repeated game id.
+
+**Fixtures (CPU).** `~/chess-artifacts/operations/rl-deep-fast/stage2/test/dose_fixtures.py` [`ec8f2db2`]: the three dose rules, the inclusive 0.9 band, refusal of
+an incomplete clock (a resume, a kept process), no overwrite, and the scan's clean / probe / co-resident / empty
+cases. **12 of 12 pass.**
+**Harness (one unmutated pass, run when the GPU is free):** `~/chess-artifacts/operations/rl-deep-fast/stage2/test/harness_phase_a.sh` [`d9330fc8`], with a fake
+HOME, a fake `nvidia-smi`, and `test/fake_collect_a.py` in place of the collect. It proves a correct run (C, D main,
+top-up, cost; doses from the report and the realised clocks; seeds and flags reaching the collect; D/C in
+[0.9, 1.1]; scans banked), a relaunch that skips every done step, and the refusals: no GO (90), `CUDA_VISIBLE_DEVICES`
+empty (94), Stage 0 unfinished (91), a tampered stage-2 file (93), an interrupted step (87), and the clear (finished
+step refused, unfinished moved aside, rerun). Its result is posted on the PR.
