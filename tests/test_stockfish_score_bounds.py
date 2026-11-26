@@ -16,6 +16,7 @@ import stat
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -299,3 +300,15 @@ def test_partial_exact_cp_after_wdl_uses_the_newer_cp(tmp_path: Path) -> None:
     assert value == pytest.approx(_expected_value(80, None))
     assert value != pytest.approx(_expected_value(20, None))
     assert scores == pytest.approx([_expected_policy_score(80, None)])
+
+
+def test_flip_wdl_pov_refuses_an_input_it_cannot_flip() -> None:
+    """A wrong-shaped WDL used to come back UNFLIPPED (float32-cast, no error):
+    a label in the opponent's point of view with nothing to show for it. The
+    three production callers all pass a ``(3,)`` vector, so refusing is free."""
+    np.testing.assert_array_equal(
+        flip_wdl_pov(np.array([0.7, 0.2, 0.1])), np.array([0.1, 0.2, 0.7], dtype=np.float32))
+    assert flip_wdl_pov(np.array([0.7, 0.2, 0.1], dtype=np.float64)).dtype == np.float32
+    for bad in (np.array([[0.7, 0.2, 0.1]]), np.array([0.7, 0.3]), np.zeros((0,)), np.array(0.5)):
+        with pytest.raises(ValueError, match="flip_wdl_pov"):
+            flip_wdl_pov(bad)

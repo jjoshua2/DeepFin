@@ -469,3 +469,75 @@ def test_training_refuses_an_unsealed_collect(tmp_path: Path) -> None:
     (tmp_path / "gen_0001" / "collect" / "manifest.json").unlink()
     with pytest.raises(ValueError, match="not sealed"):
         load_window(tmp_path, 1, TrainSettings(holdout_frac=0.0))
+
+
+def _first_batch_inputs(mirror_prob: float) -> tuple[Any, np.ndarray]:
+    """The ``x`` the model is actually called with on the first training step."""
+    torch.manual_seed(0)
+    trainer = build_trainer(tiny_model_config(), TrainSettings(mirror_prob=mirror_prob), log_dir=None)
+    seen: list[np.ndarray] = []
+
+    def grab(_module: Any, args: Any) -> None:
+        if not seen:
+            seen.append(args[0].detach().float().cpu().numpy().copy())
+
+    handle = trainer.model.register_forward_pre_hook(grab)
+    try:
+        trainer.train_steps(_sampler(), batch_size=16, steps=1)
+    finally:
+        handle.remove()
+    assert seen, "the model was never called"
+    return trainer, seen[0]
+
+
+def test_mirror_prob_setting_reaches_the_batch_the_model_trains_on() -> None:
+    """30 of the 31 simple_rl tests pin ``mirror_prob=0.0``; hard-coding 0.0 in
+    ``trainer_kwargs`` failed none of them (test audit, 2026-11-26). The proof
+    is the input tensor: the same sampled rows, file-flipped at 1.0 and
+    untouched at 0.0."""
+    from chess_anti_engine.replay.augment import mirror_x
+
+    trainer_off, plain = _first_batch_inputs(0.0)
+    trainer_on, mirrored = _first_batch_inputs(1.0)
+    assert trainer_off.mirror_prob == 0.0
+    assert trainer_on.mirror_prob == 1.0
+    rows = _sampler().sample_batch_arrays(16)["x"].astype(np.float32)
+    np.testing.assert_array_equal(plain, rows)  # same seed, same rows: the two runs differ only by the mirror
+    encoding = trainer_on._input_history_encoding
+    expected = np.stack([mirror_x(np.asarray(r), input_history_encoding=encoding) for r in rows])
+    assert not np.array_equal(expected, rows)
+    np.testing.assert_array_equal(mirrored, expected)
+
+
+@pytest.mark.parametrize(("head", "coef_key", "kl_key", "other_kl_key"), [
+    ("kl_policy", "policy_coef", "mean_policy_kl", "mean_wdl_kl"),
+    ("kl_wdl", "wdl_coef", "mean_wdl_kl", "mean_policy_kl"),
+])
+def test_train_generation_arms_the_kl_anchor_from_the_settings(
+        tmp_path: Path, head: str, coef_key: str, kl_key: str, other_kl_key: str) -> None:
+    """``test_kl_anchor_gradients_...`` builds the anchor by hand; nothing ran
+    the branch of ``train_generation`` that builds it from ``kl_policy`` /
+    ``kl_wdl`` (zeroing either coefficient there failed no test, 2026-11-26)."""
+    from chess_anti_engine.simple_rl.learn import train_generation
+    from tests.simple_rl_helpers import save_tiny_checkpoint
+
+    run = tmp_path / "run"
+    (run / "gen_0000").mkdir(parents=True)
+    save_tiny_checkpoint(run / "gen_0000" / "model.pt", seed=0)
+    reference = save_tiny_checkpoint(tmp_path / "reference.pt", seed=7)
+    _write_generation(run, 1, 48)
+    base = {"device": "cpu", "batch_size": 16, "holdout_frac": 0.0, "seed": 3, "lr": 1e-3, "mirror_prob": 0.0}
+
+    with pytest.raises(ValueError, match="needs a reference checkpoint"):
+        train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
+                         prev_trainer_checkpoint=None, settings=TrainSettings(**cast(Any, {**base, head: 0.5})))
+
+    settings = TrainSettings(**cast(Any, {**base, head: 0.5, "kl_reference": str(reference)}))
+    summary = train_generation(run_dir=run, generation=1, init_checkpoint=run / "gen_0000" / "model.pt",
+                               prev_trainer_checkpoint=None, settings=settings)
+    anchor = summary["anchor"]
+    assert anchor is not None, "the anchor was never built"
+    assert anchor["rows"] == 48  # every presented row passed through the penalty hook
+    assert anchor[coef_key] == 0.5
+    assert anchor[kl_key] > 0.0
+    assert anchor[other_kl_key] == 0.0  # only the requested head is anchored
