@@ -175,38 +175,29 @@ def shard_files(root: Path, index: int, count: int) -> list[str]:
         raise RuntimeError(f"cannot read {SHARD_DURATIONS}: {exc}") from exc
 
 
-def shard_live_phases(root: Path, files: Iterable[str], deselected: frozenset[str]) -> set[str]:
-    """The phases (``xdist``, ``serial``) that must run tests for these shard files.
+def shard_exit_code(codes: list[int], any_selected: bool) -> int:
+    """Exit code of a sharded run from its pytest processes' codes, in launch order.
 
-    Read from the tree as it is now: each file that change scoping did not
-    deselect, classified by the rule tests/conftest.py marks ``serial`` with.
-    The timings play no part, so a file that moved phase since they were
-    measured is still expected where it runs today.
+    pytest exits 5 when it selected no test. In a shard that says nothing about
+    a lost test: both phases get the same explicit paths and complementary
+    marker expressions, so every test pytest can select runs in exactly one of
+    them, and a phase is empty whenever none of the shard's tests is of its
+    kind. What a file holds is known only to pytest (a file may define no test,
+    only slow ones, or skip itself at import), so no expectation is derived
+    from file names. An empty phase passes when another phase ran tests. A
+    shard that ran no test at all passes only when change scoping deselected
+    every one of its files.
     """
-    checkout = str(Path(__file__).resolve().parents[1])
-    if checkout not in sys.path:
-        # Running by filename puts scripts/, not the checkout root, on sys.path.
-        sys.path.insert(0, checkout)
-    from tests.serial_phase import runs_in_serial_phase
-
-    return {"serial" if runs_in_serial_phase(root / name) else "xdist"
-            for name in files if name not in deselected}
-
-
-def shard_phase_code(code: int, phases: Iterable[str], live_phases: set[str]) -> int:
-    """Exit code of one pytest process of a sharded run that covers ``phases``.
-
-    pytest exits 5 when it selected no test. That passes only when none of the
-    shard's selected files belongs to a phase this process covers: a shard of
-    serial files only has nothing for the xdist phase, and a shard whose every
-    file was deselected by change scoping has nothing for either. A process
-    with a selected file to run and no test run stays a failure.
-    """
-    covered = set(phases)
-    if code == 5 and not covered & live_phases:
-        print(f"{'/'.join(sorted(covered))} phase: no selected test file of this shard runs in it", flush=True)
-        return 0
-    return code
+    ran = [code for code in codes if code != 5]
+    if ran:
+        if len(ran) < len(codes):
+            print("a phase selected no test in this shard; the other phase ran its tests", flush=True)
+        return next((code for code in ran if code), 0)
+    if any_selected:
+        print("no test ran in this shard although it has selected test files", flush=True)
+        return 5
+    print("change scoping deselected every test file of this shard", flush=True)
+    return 0
 
 
 # Change-scoped selection of script-only test files. Any doubt runs everything:
@@ -508,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.changed_vs and args.suite != "cpu":
         parser.error("--changed-vs applies only to the cpu suite")
     shard: tuple[int, int] | None = None
-    live_phases: set[str] = set()
+    any_selected = True
     selected: list[str] = []
     if args.shard is not None:
         if args.suite != "cpu":
@@ -569,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
                 scope_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-scope-")))
                 deselected = apply_change_scope(env, args.changed_vs, scope_dir)
                 if shard is not None:
-                    live_phases = shard_live_phases(ROOT, selected, deselected)
+                    any_selected = any(name not in deselected for name in selected)
             print(f"executing: {shlex.join(command)}", flush=True)
             result = subprocess.run(command, cwd=ROOT, env=parallel_environment(env) if xdist else env, check=False)
             code = result.returncode
@@ -578,11 +569,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"executing: {shlex.join(serial_command)}", flush=True)
                 serial_code = subprocess.run(serial_command, cwd=ROOT, env=env, check=False).returncode
                 if shard is not None:
-                    code = shard_phase_code(code, ("xdist",), live_phases)
-                    serial_code = shard_phase_code(serial_code, ("serial",), live_phases)
-                code = code or serial_code
+                    code = shard_exit_code([code, serial_code], any_selected)
+                else:
+                    code = code or serial_code
             elif shard is not None:
-                code = shard_phase_code(code, ("xdist", "serial"), live_phases)
+                code = shard_exit_code([code], any_selected)
     except (ImportError, OSError, RuntimeError) as exc:
         print(f"validation preflight/launch failed: {exc}", file=sys.stderr, flush=True)
         code = 1

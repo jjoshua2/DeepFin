@@ -393,44 +393,38 @@ def test_shard_universe_is_recursive_and_takes_both_pytest_name_patterns(
     assert pytestconfig.getini("python_files") == ["test_*.py", "*_test.py"]
 
 
-_XDIST_FILE = "def test_x():\n    pass\n"
-_SERIAL_FILE = "import subprocess\n\n\ndef test_x():\n    pass\n"
-
-
 @pytest.mark.parametrize(
-    ("sources", "deselect", "timed", "phase_codes", "expected"),
+    ("deselect", "phase_codes", "expected"),
     [
-        # pytest exits 5 when a phase selected no test. The phases that must run
-        # come from the files as they are now, never from the timings.
-        ({"a": _SERIAL_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (5, 0), 0),
-        ({"a": _XDIST_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (0, 5), 0),
-        ({"a": _XDIST_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (5, 0), 5),
-        ({"a": _SERIAL_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (0, 5), 5),
-        # A file that moved phase since the timings were measured, both ways.
-        ({"a": _SERIAL_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (5, 0), 0),
-        ({"a": _SERIAL_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (0, 5), 5),
-        ({"a": _XDIST_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (0, 5), 0),
-        ({"a": _XDIST_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (5, 0), 5),
-        # Selected files in a phase that ran nothing never pass, whatever else happened.
-        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, (), {}, (5, 5), 5),
-        ({"a": _SERIAL_FILE}, (), {}, (5, 5), 5),
-        ({"a": _SERIAL_FILE}, (), {}, (5, 1), 1),
-        # Change scoping deselected every file of one phase, then of the shard.
-        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_b.py",), {}, (0, 5), 0),
-        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_b.py",), {}, (5, 5), 5),
-        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_a.py", "tests/test_b.py"), {}, (5, 5), 0),
-        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_a.py", "tests/test_b.py"), {}, (5, 2), 2),
+        # pytest exits 5 when a phase selected no test. One empty phase passes
+        # when the other ran tests, whichever it is and whatever the files are.
+        ((), (5, 0), 0),
+        ((), (0, 5), 0),
+        ((), (0, 0), 0),
+        # A real failure is never hidden by the other phase being empty or green.
+        ((), (5, 1), 1),
+        ((), (1, 5), 1),
+        ((), (0, 2), 2),
+        ((), (3, 0), 3),
+        ((), (1, 2), 1),
+        # A shard that ran nothing at all fails while any of its files is selected.
+        ((), (5, 5), 5),
+        (("tests/test_b.py",), (5, 5), 5),
+        (("tests/test_b.py",), (0, 5), 0),
+        # Change scoping deselected every file of the shard.
+        (("tests/test_a.py", "tests/test_b.py"), (5, 5), 0),
+        (("tests/test_a.py", "tests/test_b.py"), (5, 2), 2),
     ],
 )
-def test_a_shard_phase_without_tests_passes_only_where_no_selected_file_runs_in_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sources: dict[str, str], deselect: tuple[str, ...],
-    timed: dict[str, dict[str, float]], phase_codes: tuple[int, int], expected: int,
+def test_an_empty_shard_phase_passes_and_a_shard_that_ran_nothing_does_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deselect: tuple[str, ...],
+    phase_codes: tuple[int, int], expected: int,
 ) -> None:
     monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
     (tmp_path / "tests").mkdir()
-    for stem, source in sources.items():
-        (tmp_path / f"tests/test_{stem}.py").write_text(source)
-    (tmp_path / validate.SHARD_DURATIONS).write_text(json.dumps(timed))
+    for stem in ("a", "b"):
+        (tmp_path / f"tests/test_{stem}.py").write_text("def test_x():\n    pass\n")
+    (tmp_path / validate.SHARD_DURATIONS).write_text("{}")
     monkeypatch.setattr(validate, "ROOT", tmp_path)
     monkeypatch.setattr(validate, "preflight", lambda *_args: None)
     monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: frozenset(deselect))
@@ -439,12 +433,61 @@ def test_a_shard_phase_without_tests_passes_only_where_no_selected_file_runs_in_
                         lambda command, **_kwargs: subprocess.CompletedProcess(command, next(codes)))
     assert validate.main(["cpu", "--threads", "auto", "--shard", "1/1", "--report-dir", "results"]) == expected
     # Unsharded, an empty phase stays a failure.
-    codes = iter(phase_codes)
-    assert validate.main(["cpu", "--threads", "auto", "--report-dir", "results"]) != 0
+    if 5 in phase_codes:
+        codes = iter(phase_codes)
+        assert validate.main(["cpu", "--threads", "auto", "--report-dir", "results"]) != 0
     # One process for both phases: 5 passes only when no file is selected at all.
     codes = iter((5,))
     single = validate.main(["cpu", "--threads", "2", "--shard", "1/1", "--report-dir", "results"])
-    assert single == (0 if set(deselect) >= {f"tests/test_{stem}.py" for stem in sources} else 5)
+    assert single == (0 if len(deselect) == 2 else 5)
+
+
+_MARK_SERIAL_CONFTEST = """
+import pytest
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if "subprocess" in item.path.read_text():
+            item.add_marker(pytest.mark.serial)
+"""
+
+
+@pytest.mark.parametrize(
+    ("lone_xdist_file", "serial_passes", "expected"),
+    [
+        # tests/test_run_bootstrap.py: a test file that defines no test.
+        ('"""Helpers only."""\n', True, 0),
+        ("import pytest\n\n\n@pytest.mark.slow\ndef test_x():\n    pass\n", True, 0),
+        ('import pytest\n\npytest.skip("not here", allow_module_level=True)\n', True, 0),
+        ('"""Helpers only."""\n', False, 1),
+    ],
+)
+def test_a_file_with_no_runnable_test_cannot_fail_its_shard(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, lone_xdist_file: str, serial_passes: bool, expected: int,
+) -> None:
+    """Real pytest runs: the only xdist-phase file of a shard selects nothing.
+
+    This failed shard 8/10 once a new file moved the partition so that the
+    test-less tests/test_run_bootstrap.py was the shard's one non-serial file.
+    """
+    monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "conftest.py").write_text(_MARK_SERIAL_CONFTEST)
+    (tmp_path / "pytest.ini").write_text("[pytest]\nmarkers =\n    serial\n    slow\n")
+    (tmp_path / "tests/test_serial.py").write_text(
+        f"import subprocess\n\n\ndef test_runs():\n    assert subprocess and {serial_passes!r}\n")
+    (tmp_path / "tests/test_lone.py").write_text(lone_xdist_file)
+    (tmp_path / validate.SHARD_DURATIONS).write_text("{}")
+    monkeypatch.setattr(validate, "ROOT", tmp_path)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: frozenset())
+    # Two phases without needing xdist here: only the split matters, and plain
+    # pytest reports an empty selection with the same exit code 5.
+    monkeypatch.setattr(validate, "parallel_args", lambda *_args: ["-p", "no:cacheprovider"])
+    assert validate.main(["cpu", "--threads", "auto", "--shard", "1/1", "--report-dir", "results"]) == expected
+    assert not ET.parse(tmp_path / "results/cpu.xml").findall(".//testcase[@name='test_x']")
+    assert len(ET.parse(tmp_path / "results/cpu-serial.xml").findall(".//testcase[@name='test_runs']")) == 1
 
 
 def test_change_scope_hands_the_shard_the_same_deselection_it_hands_pytest(
