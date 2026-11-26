@@ -322,7 +322,7 @@ def test_shards_partition_every_test_file_in_both_phases(
     """Read from the pytest commands the runner launches, one run per shard."""
     monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
     monkeypatch.setattr(validate, "preflight", lambda *_args: None)
-    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: None)
+    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: frozenset())
     seen: list[list[str]] = []
 
     def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -379,29 +379,61 @@ def test_shard_applies_only_to_the_cpu_suite(tmp_path: Path) -> None:
     assert validate.parse_shard("10/10") == (10, 10)
 
 
+def test_shard_universe_is_recursive_and_takes_both_pytest_name_patterns(
+    tmp_path: Path, pytestconfig: pytest.Config,
+) -> None:
+    for name in ("tests/test_top.py", "tests/sub/test_nested.py", "tests/b_test.py", "tests/sub/deep/c_test.py",
+                 "tests/helper.py", "tests/conftest.py", "scripts/test_outside.py"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("")
+    assert validate.shard_universe(tmp_path) == [
+        "tests/b_test.py", "tests/sub/deep/c_test.py", "tests/sub/test_nested.py", "tests/test_top.py"]
+    # The hand-written universe matches pytest only while these stay as they are.
+    assert pytestconfig.getini("testpaths") == ["tests"]
+    assert pytestconfig.getini("python_files") == ["test_*.py", "*_test.py"]
+
+
+_XDIST_FILE = "def test_x():\n    pass\n"
+_SERIAL_FILE = "import subprocess\n\n\ndef test_x():\n    pass\n"
+
+
 @pytest.mark.parametrize(
-    ("phase_codes", "timed", "expected"),
+    ("sources", "deselect", "timed", "phase_codes", "expected"),
     [
-        # pytest exits 5 when a phase selected no test.
-        ((5, 0), {"serial": {"tests/test_only.py": 1.0}, "xdist": {}}, 0),
-        ((0, 5), {"serial": {}, "xdist": {"tests/test_only.py": 1.0}}, 0),
-        ((5, 0), {"serial": {}, "xdist": {"tests/test_only.py": 1.0}}, 5),
-        ((0, 5), {"serial": {"tests/test_only.py": 1.0}, "xdist": {}}, 5),
-        ((5, 5), {"serial": {}, "xdist": {}}, 5),
-        ((5, 1), {"serial": {"tests/test_only.py": 1.0}, "xdist": {}}, 1),
+        # pytest exits 5 when a phase selected no test. The phases that must run
+        # come from the files as they are now, never from the timings.
+        ({"a": _SERIAL_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (5, 0), 0),
+        ({"a": _XDIST_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (0, 5), 0),
+        ({"a": _XDIST_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (5, 0), 5),
+        ({"a": _SERIAL_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (0, 5), 5),
+        # A file that moved phase since the timings were measured, both ways.
+        ({"a": _SERIAL_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (5, 0), 0),
+        ({"a": _SERIAL_FILE}, (), {"xdist": {"tests/test_a.py": 1.0}}, (0, 5), 5),
+        ({"a": _XDIST_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (0, 5), 0),
+        ({"a": _XDIST_FILE}, (), {"serial": {"tests/test_a.py": 1.0}}, (5, 0), 5),
+        # Selected files in a phase that ran nothing never pass, whatever else happened.
+        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, (), {}, (5, 5), 5),
+        ({"a": _SERIAL_FILE}, (), {}, (5, 5), 5),
+        ({"a": _SERIAL_FILE}, (), {}, (5, 1), 1),
+        # Change scoping deselected every file of one phase, then of the shard.
+        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_b.py",), {}, (0, 5), 0),
+        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_b.py",), {}, (5, 5), 5),
+        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_a.py", "tests/test_b.py"), {}, (5, 5), 0),
+        ({"a": _XDIST_FILE, "b": _SERIAL_FILE}, ("tests/test_a.py", "tests/test_b.py"), {}, (5, 2), 2),
     ],
 )
-def test_a_shard_phase_without_tests_passes_only_where_no_file_is_timed_in_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    phase_codes: tuple[int, int], timed: dict[str, dict[str, float]], expected: int,
+def test_a_shard_phase_without_tests_passes_only_where_no_selected_file_runs_in_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sources: dict[str, str], deselect: tuple[str, ...],
+    timed: dict[str, dict[str, float]], phase_codes: tuple[int, int], expected: int,
 ) -> None:
     monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
     (tmp_path / "tests").mkdir()
-    (tmp_path / "tests/test_only.py").write_text("def test_x():\n    pass\n")
+    for stem, source in sources.items():
+        (tmp_path / f"tests/test_{stem}.py").write_text(source)
     (tmp_path / validate.SHARD_DURATIONS).write_text(json.dumps(timed))
     monkeypatch.setattr(validate, "ROOT", tmp_path)
     monkeypatch.setattr(validate, "preflight", lambda *_args: None)
-    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: None)
+    monkeypatch.setattr(validate, "apply_change_scope", lambda *_args: frozenset(deselect))
     codes = iter(phase_codes)
     monkeypatch.setattr(validate.subprocess, "run",
                         lambda command, **_kwargs: subprocess.CompletedProcess(command, next(codes)))
@@ -409,6 +441,23 @@ def test_a_shard_phase_without_tests_passes_only_where_no_file_is_timed_in_it(
     # Unsharded, an empty phase stays a failure.
     codes = iter(phase_codes)
     assert validate.main(["cpu", "--threads", "auto", "--report-dir", "results"]) != 0
+    # One process for both phases: 5 passes only when no file is selected at all.
+    codes = iter((5,))
+    single = validate.main(["cpu", "--threads", "2", "--shard", "1/1", "--report-dir", "results"])
+    assert single == (0 if set(deselect) >= {f"tests/test_{stem}.py" for stem in sources} else 5)
+
+
+def test_change_scope_hands_the_shard_the_same_deselection_it_hands_pytest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(validate, "changed_files", lambda *_args: (["docs/x.md"], "ok"))
+    monkeypatch.setattr(validate, "script_test_deselection",
+                        lambda *_args: (frozenset({"tests/test_b.py"}), "one"))
+    env: dict[str, str] = {}
+    assert validate.apply_change_scope(env, None, tmp_path) == frozenset({"tests/test_b.py"})
+    assert Path(env[validate.DESELECT_LIST_ENV]).read_text().split() == ["tests/test_b.py"]
+    monkeypatch.setattr(validate, "changed_files", lambda *_args: (None, "not a pull request"))
+    assert validate.apply_change_scope({}, None, tmp_path) == frozenset()
 
 
 def test_every_test_that_reads_the_records_is_in_the_records_suite() -> None:
@@ -503,7 +552,7 @@ def test_one_process_cpu_run_keeps_a_single_unsplit_command(
 
 
 def test_serial_phase_rule_and_explicit_list(tmp_path: Path) -> None:
-    from tests.conftest import SERIAL_TEST_FILES, runs_in_serial_phase
+    from tests.serial_phase import SERIAL_TEST_FILES, runs_in_serial_phase
 
     missing = sorted(name for name in SERIAL_TEST_FILES if not (validate.ROOT / "tests" / name).is_file())
     assert not missing
