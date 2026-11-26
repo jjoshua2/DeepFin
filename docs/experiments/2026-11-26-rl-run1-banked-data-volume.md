@@ -468,10 +468,10 @@ verifies the whole bank against `SHA256SUMS`.
 
 | File | sha256 | Origin |
 |---|---|---|
-| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/SHA256SUMS` [`424550da6c56`] | `424550da6c5680a423cf63941df75c336fd0fa8fce8487bee37caf24a89989ec` | every file of the bank |
-| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/gpu_guard.sh` [`aaa51afcad66`] | `aaa51afcad66b5f590172b6524acdb9a6ddc4456028017830d9266296606952c` | generation 2's guard v3, renamed to `VOLUME_*`, stage `volume` |
-| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/gpu_scan.sh` [`949408e727e7`] | `949408e727e7ccbf942dd28f58ad800f958267577a93822950529ac20734f466` | unchanged |
-| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/launch_volume.sh` [`f6da0bea755f`] | `f6da0bea755fd4216a3efe28d0eac1a986f99ca9a18bc6459930227bfc7717c5` | generation 2's `launch_gen2.sh` v6: steps pool / smoke / train (snapshots, pause marker) / fits / bounds / bake / three matches / verdicts; RAM floor + watchdog; screen inside the primary |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/SHA256SUMS` [`6c7e9545c466`] | `6c7e9545c46661679dcb6c6f0cdaec004e247bccd4867e88df7a981f72f1baab` | every file of the bank |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/gpu_guard.sh` [`29e85c52335d`] | `29e85c52335dd7f1e4f010b429f5d7e226156bc73c0d8863df4119523e7d6bad` | generation 2's guard v3, renamed to `VOLUME_*`, stage `volume`; `_SCAN_SHA` re-pinned to the v4z scan (follow-up below) |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/gpu_scan.sh` [`47c08152bd9e`] | `47c08152bd9e91dd1844018ab42dec2265a5dfb27e01924e206782e1fa369b84` | v4 plus only the full-width bank's v7 zombie hunk (follow-up below) |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/launch_volume.sh` [`7130c48bc46a`] | `7130c48bc46a6c482172ff195df8bc6dcb74f3122f7ab883ed317693c1281a3a` | generation 2's `launch_gen2.sh` v6: steps pool / smoke / train (snapshots, pause marker) / fits / bounds / bake / three matches / verdicts; RAM floor + watchdog; screen inside the primary; `bake()` runs `run env CUDA_VISIBLE_DEVICES= …` (follow-up below) |
 | `~/chess-artifacts/operations/rl-run1-volume.staging/bank/move_aside.sh` [`1a71108dffef`] | `1a71108dffef6b88e517319d7bb4f64ffb9cf4d07b51b677768faffb683ad9e3` | generation 2's v5: never train, never a whole match; `--seat A|B` |
 | `~/chess-artifacts/operations/rl-run1-volume.staging/bank/operator_volume.sh` [`f9e3f2b4133a`] | `f9e3f2b4133aad46ea973123f82e4b3fca103141c34e5d365e3ef9f83ea683ed` | the #1517 MINOR fixes 2-4 (idempotent, kept backups, `|| exit 3`, self sha256) |
 | `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/SHA256SUMS` [`f8e0abaebf1f`] | `f8e0abaebf1f170650363e04c4dc1d36395c6c07b9611062c397549c787d8483` | every file of `prelaunch/` |
@@ -498,6 +498,66 @@ Read-only inputs, pinned by the launcher or the checks library:
 - `rl-run1-followup/run_followup_match.sh` `7c8fd065` (93);
 - the PIN's `scripts/fit_value_recal.py` `37e27420` (93);
 - the PIN's `scripts/arena_seat_balanced_pool.py` `cfd72395`.
+
+### Follow-up: zombie-tolerant scan, `bake()` env (after #1527)
+
+Two changes to the staged bank after #1527's review. The table above carries the new sha256s. The prior files are kept
+outside the bank, so `SHA256SUMS` still lists exactly the bank:
+`~/chess-artifacts/operations/rl-run1-volume.staging/prev/gpu_scan.sh.v4` [`949408e727e7`],
+`.../gpu_guard.sh.v1` [`aaa51afcad66`], `.../launch_volume.sh.v1` [`f6da0bea755f`], `.../SHA256SUMS.v1`
+[`424550da6c56`].
+
+- **`gpu_scan.sh` v4z.** The full-width bank's scan v7 added a zombie rule: its v5+ scan refused on a non-dumpable
+  zombie (`cannot read the fd links of pid … Permission denied`), and the host carries about 80 zombies left by a
+  parent that does not reap them. This bank's scan is v4 plus exactly v7's hunk, taken from the diff of
+  `~/chess-artifacts/operations/rl-run1-root-full-width/gpu_scan.sh.v6` [`b8197e6e9ca6`] against
+  `.../gpu_scan.sh` [`d1aee351d16e`]: a `_gs_read_state` reader; State Z gives a NOTE and a skip; a process whose
+  status and `/proc` entry are both gone is skipped; anything else unreadable still refuses. Nothing else from v5–v7
+  is ported; the header line is reworded. `gpu_guard.sh`'s `_SCAN_SHA`, the launcher's `GUARD_SHA` and `SHA256SUMS`
+  are re-pinned. `prelaunch/SHA256SUMS` and `operator_volume.sh` are unchanged; the operator verifies the bank
+  against `SHA256SUMS`.
+- **v4 was not the scan that refused.** v4 skips a process with an empty cmdline before the fd clause, and a zombie's
+  cmdline is empty, so v4 already passed the host's zombies (argv and device clauses stubbed: rc 0). The hunk covers
+  a process that becomes a zombie between its cmdline read and its fd listing. v4's empty-argv skip is the gap v5
+  closed (a GPU process that cleared its argv escapes the device clause). It is not ported here; that is a separate
+  decision.
+- **`bake()`** runs both `bake_recal.py` calls as `run env CUDA_VISIBLE_DEVICES= PYTHONPATH=. $PY …`, like every
+  other step. The old `VAR= run …` prefix on a shell function also reached the child, so this is consistency, not a
+  behaviour change.
+
+**Tests.** A direct scan-function test, run while a live GPU job held the host, so it starts only unlisted
+`python3 -c` processes. The argv and device clauses are stubbed so the fd-readability clause decides:
+`~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/zombie/zombie_test.sh` [`74853a74d355`], output
+`.../out_v4z.txt` [`05bbbd53a3fe`], 6/6:
+
+- Z1: a real non-dumpable process that turns zombie between its cmdline read and its fd listing is NOTEd and skipped.
+- Z2: a live non-dumpable process still refuses beside it.
+- Z3: a process that vanished after a denied listing is skipped.
+- Z4: a live process with denied fd links still refuses.
+- G1/G2: the guard's pin accepts this scan and refuses a tampered copy (the harness's tampered-scan case, run directly).
+
+Mutants, each failing on its own target pid:
+
+- the old v4 fails Z1, refusing on the zombie: `.../mut_gpu_scan.sh.v4.txt` [`bdee193e9fb2`];
+- the Z branch disabled fails Z1: `.../mut_M1_no_zombie_branch.sh.txt` [`a21bb500fceb`];
+- the vanished skip removed fails Z3: `.../mut_M2_no_vanished_skip.sh.txt` [`6f728aa73bd3`];
+- every process read as a zombie fails Z2 and Z4: `.../mut_M3_everything_zombie.sh.txt` [`8cba93a1dc96`].
+
+The harness's other scan case (a listed-name job refused) spawns a listed name, so it was not run while the live job
+was up. The scan's argv clause is unchanged.
+
+**Live host, read-only.**
+
+- `.../live_unstubbed.txt` [`824cf167a014`]: the full scan refuses (rc 8) on the running full-width Stage 0 job,
+  which is listed. That is correct while the job runs.
+- `.../live_fdclause.txt` [`ae5d2c12657e`]: with the argv and device clauses stubbed, it returns 0 on 3 of 3 runs
+  with 78 zombies present.
+
+**Found, not changed (fails closed).** A live process that closes an fd between `find` listing it and `stat -L`
+reading it makes the scan refuse (`cannot read the fd links of pid …`). The "exited mid-scan" exemption needs every
+output line to be ENOENT, and the lines already listed are not. The code is the same in v4 and v7. The guard
+re-checks every 5 s up to `VOLUME_REGUARD_WAIT_S` and only the last attempt decides, so this costs a retry, not a
+wrong launch. These tests hit it repeatedly on Stage 0's busiest worker.
 
 ### Proofs on real fixtures (CPU; no GPU; torch-importing runs inside a private mount namespace)
 
