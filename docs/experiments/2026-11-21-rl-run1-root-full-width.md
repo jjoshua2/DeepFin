@@ -1,6 +1,6 @@
 # 2026-11-21: RL run 1 — full-width root round (`--root-full-width`): cost, target audit, search strength, training test (pre-registration)
 
-**Status: registered, not launched; re-pinned to `{PIN_NEW}` (forward chunking, PR #1511) by
+**Status: registered, not launched; re-pinned to `0d4d11572275095f883f22df17d5b7f25683e41b` (forward chunking, PR #1511) by
 [Addendum 2](#addendum-2-2026-11-22-the-re-pin-to-forward-chunking-and-a-second-full-width-arm-c-wide-candidates),
 which also makes the registered full-width arm the wide arm, `fw_wide`.**
 - **The old pin `fd8c0ce08` and every stage command written for it are superseded (addendum 2026-11-22).**
@@ -175,8 +175,8 @@ The guard refuses unless **all** of these hold:
 - **Utilisation (v7).** Five samples of `utilization.gpu`, one second apart, every GPU line: the maximum must be
   below 10% (idle here reads 0–1%; a foreign job, or the owner gaming, reads more, and when he games the GPU is not
   ours). A non-integer or a failed `nvidia-smi` refuses with exit 11.
-- **No GPU job of this user (v7: `gpu_scan.sh`).** One file, byte-identical in this bank, the generation-2 bank and
-  the sibling bank (same sha; this bank owns it). It reads `/proc` only. A same-uid process (Uid from
+- **No GPU job of this user (v7: `gpu_scan.sh`).** One file, owned by this bank. The generation-2 and sibling banks
+  carry v5, byte-identical; this bank carries v6, which adds only the `desc` guard below (Addendum 2). It reads `/proc` only. A same-uid process (Uid from
   `/proc/<pid>/status`) outside the caller's own ancestors and descendants refuses if:
   - its argv (`/proc/<pid>/cmdline`, NUL-separated) is a GPU entry point: `basename(argv[0])` is listed (`lc0`,
     `Ceres`, `deepfin`, a script run directly); or `argv[0]` is `python*` and the first non-option argument has a
@@ -276,12 +276,14 @@ The guard refuses unless **all** of these hold:
         `unshare` without probing once `GT_REAL_*` is set. The converse trap is in the harness itself: since the exemption, a "refused" or "excluded" case whose
     listed process runs WITH the empty entry passes whatever the scan does. Every argv-dependent case therefore
     reads `/proc/<pid>/environ` of the process it started and fails as VACUOUS if the exemption would apply.
-  - **Known cosmetic defect (v5, left for the next batch to spare three re-pins).** A launcher log can show
+  - **Cosmetic defect in v5, fixed in v6 (this bank only, Addendum 2).** A v5 launcher log can show
     `gpu_scan.sh: line 217: desc: bad array subscript`. It is not a failure. Cause: a process exiting mid-scan
     leaves its PPid empty, and the descendant loop then indexes `desc[""]`. The test fails, so that process is NOT
     excluded (the safe direction), and the scan's result is unaffected; it is non-fatal under `set -euo pipefail`
-    (verified). The one-line fix for the next batch: store `pp[$p]` only when the PPid read is non-empty
-    (`[ -n "$pa" ] && pp[$p]=$pa`).
+    (verified). v6 stores `pp[$p]` only when the PPid read is numeric. Harness case (v13): an interposed enumeration
+    of the caller's own shell plus a status file with no PPid line must give no bad-subscript error and scan rc 0.
+    Mutant G34 (v5's unguarded store) prints the error (1 against 0, checked by hand on the two files before the
+    series). The generation-2 and sibling banks keep v5 until their next revision.
 
 **Between-step re-guards retry through a transient GPU user (addendum 2026-11-22).** At about 07:50 on 2026-11-22
 the scan refused, correctly, on an agent's pytest process holding the real device. `torch.cuda.is_available()`
@@ -352,7 +354,7 @@ automatically. Before reading any Stage 0 block, the operator compares each knob
 above that bound voids the block and holds the stage: a spill into shared memory, which on WSL2 slows a run before
 it fails, must not silently contaminate a timed leg. The coordinator makes this check by hand and records it in the
 stage's readout. The automated version (`run_stage0.sh` recording `memory.total`, `stage0_decide.py` refusing with
-`MEMORY_SPILL_HOLD`) is on the next-batch list, beside the `gpu_scan.sh` `desc` fix.
+`MEMORY_SPILL_HOLD`) is on the next-batch list. (The `gpu_scan.sh` `desc` fix rides Addendum 2.)
 
 **Where the 7.8 GB comes from (read from the code and the logs, not changed).** The collect never uses the 2-group
 eval pipeline, in either arm. It reuses trees, and `gumbel_c.py:1342` turns the pipeline off whenever a persistent
@@ -1300,7 +1302,7 @@ length, the arm gets more or fewer rows and GPU-h than the pilot's 761,979 rows 
 ## Addendum 2 (2026-11-22): the re-pin to forward chunking, and the wide arm replaces the topk-16 arm
 
 **Status.** This addendum is an amendment made before any data. No stage of this record has run. It does two things:
-- **The re-pin.** Every stage moves to the pin `{PIN_NEW}`.
+- **The re-pin.** Every stage moves to the pin `0d4d11572275095f883f22df17d5b7f25683e41b`.
 - **The arm.** The registered full-width arm becomes the WIDE arm, `fw_wide`, replacing B (`--root-full-width
   --topk 16`):
   - B is registered and withdrawn before any data. Its measured numbers stay in this record: 28,320 MiB peak with the
@@ -1354,9 +1356,18 @@ rule gives for its sims:
   (`~/chess-artifacts/operations/rl-run1-root-full-width.opdiag/mem_wide2_20261122/RESULT.md` [`f36a10c5`]).
   Round 0's calls of about 5,000 rows each went through as one eager forward per process.
 
-**The fix is PR #1511, merged as `{PIN_NEW}`.** It bounds every collect forward at `--eval-chunk-rows` rows, default
+**The fix is PR #1511, merged as `0d4d11572275095f883f22df17d5b7f25683e41b`.** It bounds every collect forward at `--eval-chunk-rows` rows, default
 512, the CUDA-graph row cap. A larger call runs as consecutive forwards of at most that many rows, so every chunk
-replays a captured graph. Every stage of this record now runs at `{PIN_NEW}`, B included.
+replays a captured graph. Every stage of this record now runs at `0d4d11572275095f883f22df17d5b7f25683e41b`, B included.
+
+**Why #1511's merge commit, not a later main.** The bank was re-pinned on 2026-11-25, when main had moved to
+`27206434a`. The commits after `0d4d11572275095f883f22df17d5b7f25683e41b` (#1515, #1516) change docs and `chess_anti_engine/simple_rl/learn.py` /
+`sibling.py` only. The `learn.py` change moves the sibling term's construction into `build_sibling_term`, reached
+only when `w_sibling > 0`; every training cell here runs `--w-sibling 0` and never imports `sibling.py`. So the
+collect, match and training paths the bank runs are the same at both commits, and the pin stays the one
+`addendum2/operator_repin.sh` derives mechanically from the PR (log `addendum2/operator_repin.log`,
+`OPERATOR_REPIN_OK 2026-11-25T19:09:04-05:00`; six extensions built with GNU build-ids, four imports checked to load
+from the arena worktree).
 
 The bank enforced the hold until this re-pin: `HOLD_REPIN`, with guard v8 refusing exit 14 (see the Status and
 [the GPU guard](#the-gpu-guard)). The bank revision that carries this addendum ships WITHOUT the marker, because the
@@ -1402,15 +1413,16 @@ rules, fixed now. The change is recorded in this section, with its bank and sha,
   peak − idle of 8,051 MiB is far inside the bound, so no smaller-shape
   fallback is registered.
 
-**`check_vram` at `{PIN_NEW}`.** It charges boards (35.52 MiB a board) and min(leaf buffer, N) forward rows.
+**`check_vram` at `0d4d11572275095f883f22df17d5b7f25683e41b`** (the pin's own check; the refit to the chunked measurements is PR #1522, not part of
+this pin). It charges boards (35.52 MiB a board) and min(leaf buffer, N) forward rows.
 - At 3 × 128, 64 sims, it predicts 8,381 MiB per process for off, B and the wide arm alike, 24.55 GiB at K = 3. That is ≤ the
   26.43 GiB usable, so the single `--collect-procs 3` driver Stage 3 uses passes, and **Stage 3 as registered launches
   without the refit.**
 - Measured per process is 2,560–2,684 MiB, so the check is about 3.2× conservative here. Its record says
   `extrapolated: true` for every chunked shape, because every fitted point was unchunked.
-- **Any larger shape needs the refit PR first.** That refit is designed but not built. Its must-refuse list includes
-  topk 21 at 41 sims at 3 × 128 unchunked, which the current model passes at 20.99 GiB although that shape went over
-  the card.
+- **Any larger shape needs the refit first** (PR #1522, open). It charges the measured chunked peaks (3 × 128,
+  64 sims: 2,684 / 4,291 / 6,474 MiB per process at N = 512 / 1,024 / 2,048), refuses topk 21 at 41 sims with
+  5,376-row forwards at model level, and marks every unmeasured shape (4 × 128, 3 × 192) `extrapolated`.
 
 ### Why the wide arm (two sealed scoping banks)
 
@@ -1470,20 +1482,58 @@ does not apply exactly once, keeps every changed file as `.vN`, and moves `HOLD_
 
 | File | Change |
 |---|---|
-| `stage0/run_stage0.sh` | `ARENA_SHA` → `{PIN_NEW}`; knob on: `--topk (S + 1) // 2`, knob off: `--topk 16`; `--eval-chunk-rows 512`; gates per process: `eval_max_batch_realised` = 128 × 2 × topk, `eval_chunk_rows_realised` = 512, `eager_over_max_rows` = 0; the row records `topk` |
+| `stage0/run_stage0.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; knob on: `--topk (S + 1) // 2`, knob off: `--topk 16`; `--eval-chunk-rows 512`; gates per process: `eval_max_batch_realised` = 128 × 2 × topk, `eval_chunk_rows_realised` = 512, `eager_over_max_rows` = 0; the row records `topk` |
 | `stage0/stage0_decide.py` | per row: topk = the rule (knob on) or 16 (off), chunk rows 512, leaf buffer 256 × topk; the same tolerances and step rule |
-| `stage1/run_stage1.sh` | `ARENA_SHA` → `{PIN_NEW}` |
-| `stage1/stage1_search.py` | `ARENA_SHA` → `{PIN_NEW}`; the knob arms search at topk (S + 1) // 2, checked on the built config; `<tag>__topk` banked |
-| `run_rfw_match.sh` | `ARENA_SHA` → `{PIN_NEW}` |
-| `stage2/run_stage2.sh` | `ARENA_SHA` → `{PIN_NEW}`; the knob seat gets `topk=(S + 1) // 2` in its gumbel overrides |
+| `stage1/run_stage1.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b` |
+| `stage1/stage1_search.py` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; the knob arms search at topk (S + 1) // 2, checked on the built config; `<tag>__topk` banked |
+| `run_rfw_match.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b` |
+| `stage2/run_stage2.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; the knob seat gets `topk=(S + 1) // 2` in its gumbel overrides |
 | `check_shape.py` | the knob seat's realised topk must be (its sims + 1) // 2; the other seat stays the PIN's training shape |
-| `stage3/launch_stage3.sh` | `ARENA_SHA` → `{PIN_NEW}`; the training collect at `--topk (S_eq + 1) // 2 --eval-chunk-rows 512`; its collect check adds the three realised-field gates |
-| `guard_test/guard_test.sh`, `run_mutants_v12.py`, `stage0/fab_test/run_fab.py` | the arena-worktree link → `rl-run1-rfw-arena-{PIN_NEW_SHORT}`; the stub's stats follow the flags passed; cases and mutants M75–M83 for every changed gate; fab fixtures carry topk (originals kept as `*.pre-addendum2.jsonl`) plus two wide-gate cases |
+| `stage3/launch_stage3.sh` | `ARENA_SHA` → `0d4d11572275095f883f22df17d5b7f25683e41b`; the training collect at `--topk (S_eq + 1) // 2 --eval-chunk-rows 512`; its collect check adds the three realised-field gates |
+| `guard_test/guard_test.sh`, `run_mutants_v12.py`, `stage0/fab_test/run_fab.py` | the arena-worktree link → `rl-run1-rfw-arena-0d4d11572`; the stub's stats follow the flags passed (and `STUB_CHUNK` / `STUB_EAGER` / `STUB_EMB` override them); cases and mutants M75–M88 for every changed gate, including Stage 3's collect check (M84 chunk rows, M85 eager, M86 leaf buffer, M87 / M88 its `S_eq` argument missing / wrong); fab fixtures carry topk (originals kept as `*.pre-addendum2.jsonl`) plus two wide-gate cases |
 
 - `SHA256SUMS` and the record's sha table are rebuilt.
 - The guard harness and a FULL M-series run on the re-pinned bank, with the runner's `--banks` enforcement.
-- The arena worktree is a detached `rl-run1-rfw-arena-{PIN_NEW_SHORT}`, with extensions built by
+- The arena worktree is a detached `rl-run1-rfw-arena-0d4d11572`, with extensions built by
   `build_production_extensions.py` and the provenance check. The `fd8c0ce08` worktree is left untouched.
+
+### The mutant series at the re-pin (runner v12.1: early exit)
+
+- **The catch rule is unchanged in substance and stricter in form.** A mutant is CAUGHT only by a `WRONG` line from
+  a named, non-timing case, and the runner prints that case and its reason per mutant, so a vacuous kill can be
+  audited. A syntax error, a mutant that does not apply, a harness crash, a missing total line, a timeout, or a
+  non-zero exit without a `WRONG` line is never a catch.
+- **Early exit.** With `--early-exit` the harness of a mutant stops at its first such `WRONG` line. A survivor still
+  runs every case, so no verdict can change. Each harness carries a unique tag in its environment and runs from its
+  copy's directory. After each harness, killed or not, the runner kills every process still carrying the tag (or
+  with a cwd inside the copy), after reading its command line, and stops the series if any remains after 8 s.
+  `GPU_CHECK_HOLD` stops the series within about a second, as does a registered stage becoming active (`--banks`).
+- **Every mutant applies exactly once and parses** (`--apply-only`, no harness): on the re-pinned bank, 121 of 121.
+  This covers the shell files (`bash -n`), the Python files, and every `<<'PY'` heredoc inside a shell file; M85's
+  heredoc, for example, compiles. On synthetic collect stats (`S_eq` 48), M84 / M85 / M86 each pass only their own
+  bad field (chunk rows 1,024 / eager 2 / leaf buffer 4,096), and M87 / M88 refuse every collect.
+- **Deviation: the cases run in their fixed order.** `guard_test.sh` is one sequential script whose later cases
+  depend on fake-bank state built by earlier ones, so a mutant's likely catching cases cannot be moved to the front
+  without changing the cases. The early exit therefore saves only the cases after the first catch.
+- **Control, before any early-exit verdict counts** (current staging, before the re-pin; mutants chosen
+  mechanically: every 12th id, then M57 and M70):
+  - early-exit run: M0 survived with `TOTAL PASS=200 WRONG=0` (every case ran) in 694 s; all 10 mutants CAUGHT by a
+    named case; 906 s wall at `--jobs 4`;
+  - full run: stopped by a `GPU_CHECK_HOLD` after 4 of 11, each identical to the early-exit run in verdict and
+    catching case (M0 200 / 200; M14 case 141, M26 case 200, M38 case 165). The other 7 run in full mode after
+    generation 2, before the series.
+  - First catching case, of 200: M50 1, G19 6, G9 15, M57 28, M70 30, M66 33, G26 55, M14 141, M38 165, M26 200
+    (seconds 4 to 702). A caught mutant costs about 256 s on average against about 700 s for a full harness.
+- **Harness fixes after the re-pin (`guard_test.sh` v15; the re-pinned copy kept as `.v14`).** The first unmutated
+  pass on the re-pinned bank had 4 WRONG, all in cases `repin.py` had added and that had never run:
+  - the fab case counted `WRONG` with a pattern that also matched run_fab's own `TOTAL WRONG=0` line (it now counts
+    `': WRONG'`; run_fab itself was rc 0, 0 WRONG, both wide cases PASS);
+  - the three Stage 3 collect-check cases ran `env VAR=… fake …`, but `fake` is a shell function, so nothing ran
+    (they now export the variable inside the command substitution).
+  The second pass then had 1 WRONG: those three cases' clears left aborted dirs that a later `clear_step` case
+  counts; v15 removes them (fake bank only). `repin.py` is unchanged: it is the record of what was applied.
+  Outputs: `guard_test/guard_test.addendum2.v14_4wrong.txt`, `…v15a_1wrong.txt`.
+- **The series:** {SERIES_RESULT}
 
 ### Realised-field gates on every run
 
@@ -1498,7 +1548,7 @@ does not apply exactly once, keeps every changed file as `.vN`, and moves `HOLD_
 - **`fw_wide` changes three things at once** against the control: the knob, the candidate width (`topk` (S + 1) // 2
   instead of 16), and the sims (`S_eq`). They are registered as one arm, as B's knob and sims were. A result cannot
   attribute itself to the width alone; the topk-16 comparison is withdrawn (see "What is lost").
-- **The pin moved** for every arm: `{PIN_NEW}` adds forward chunking.
+- **The pin moved** for every arm: `0d4d11572275095f883f22df17d5b7f25683e41b` adds forward chunking.
   - Its effect on results is batch-size rounding. On the CPU (fp32), chunked against unchunked differs by at most
     4.8e-7 in a policy logit; the GPU bf16 bound is checked by the PR's CUDA tests at the merged head.
   - It applies to the control and the arm alike.
@@ -1591,11 +1641,15 @@ This is the owner's idea in a form that adds no evaluations.
 
 ```bash
 B=$HOME/chess-artifacts/operations/rl-run1-root-full-width
-AW=$HOME/projects/chess-worktrees/rl-run1-rfw-arena-fd8c0ce08; PY=$HOME/projects/chess/.venv/bin/python
+# (Addendum 2) once, after this record's PR merges: the staged bank replaces the real one (dry run first; the old
+# bank is kept whole as $B.pre_swap_addendum2; refuses if any real-bank file would lose its only copy)
+$B.staging/addendum2/bank_swap.sh && $B.staging/addendum2/bank_swap.sh --apply || exit 1
+AW=$HOME/projects/chess-worktrees/rl-run1-rfw-arena-0d4d11572; PY=$HOME/projects/chess/.venv/bin/python
 (cd $B && sha256sum -c --quiet SHA256SUMS) || exit 93
-cd $AW && [ "$(git rev-parse HEAD)" = fd8c0ce08e1a0829e051cf1a6fef07fd6e83c244 ] || exit 96
-$PY scripts/build_production_extensions.py || exit 1          # the worktree's .so files, at this commit
-# Every GPU stage first needs the OPERATOR's line in $B/GPU_RELEASED_BY_OPERATOR, e.g. "stage0 2026-11-22T09:00".
+cd $AW && [ "$(git rev-parse HEAD)" = 0d4d11572275095f883f22df17d5b7f25683e41b ] || exit 96
+# the worktree's .so files were built and provenance-checked by addendum2/operator_repin.sh (operator_repin.log)
+# Every GPU stage first needs the OPERATOR's line in $B/GPU_RELEASED_BY_OPERATOR, with the idle memory.used the
+# operator measured just before, e.g. "stage0 idle_mib=2068 2026-11-25T21:00 <note>".
 # Stage 0 (writes stage0/decision.json)
 $B/stage0/run_stage0_all.sh || exit 1
 # Stage 1 (GPU search, then CPU score and verdict)
