@@ -573,7 +573,10 @@ Update 1 takes 5–7 s (kernel warm-up); the probe keeps 50 updates.
   chunk-64 smoke passed never gets a chunk-32 run. Step 1b's harness tests every refusal and both markers.
 - **The part's chunk size is sealed from the smoke results, never set by hand:** `sib_mem_smoke.py seal SB7 <k>
   <cells>` writes `SB7/prelaunch/chunk_part<k>.json`. It is 64 if every cell's chunk-64 smoke reads PASS, and 32 if
-  every cell that aborted at 64 has a chunk-32 PASS. Otherwise it refuses and writes nothing. A CPU logic smoke, or a
+  every cell that aborted at 64 has a chunk-32 PASS. Otherwise it refuses and writes nothing. **A part is never mixed:**
+  the seal gives ONE C per part. If any cell aborted at 64, every sibling cell of that part trains at 32, including
+  a cell that passed at 64 (a smaller chunk forwards fewer pairs at once, so its memory is below the chunk-64 run
+  that passed). The equal-budget rule and the take-effect check read that one sealed C. A CPU logic smoke, or a
   smoke run at another chunk than its stem says, is not a verdict.
 - **One registered fallback:** if a sibling smoke ABORTs at chunk 64, it is rerun ONCE at `--sibling-chunk-pairs
   32` (stem `mem_smoke_<cell>_c32`). Chunk size is gradient-equivalent and out of the resume key, so this is not a data change. If that passes,
@@ -685,7 +688,7 @@ shown is revision 6's command text at `ea56911fc` with `SB` → `SB7` for output
 SB=$HOME/chess-artifacts/operations/rl-run1-sibling; SB7=$HOME/chess-artifacts/operations/rl-run1-sibling-r7
 P=$HOME/chess-artifacts/operations/rl-run1-pilot; AV=$HOME/chess-artifacts/operations/rl-run1-value-anchor
 PIN=$(cat $P/PIN.txt); PINW=$HOME/projects/chess-worktrees/rl-run1-pilot-${PIN:0:9}
-TSHA=ea56911fc4e37b2814989633c5c56c6145c8d4ae; TW=$HOME/projects/chess-worktrees/rl-run1-sibling-${TSHA:0:9}
+TSHA=27206434a988a121f83eb950dd3aabb97c5b8cfa; TW=$HOME/projects/chess-worktrees/rl-run1-sibling-${TSHA:0:9}   # addendum 1
 PY=$HOME/projects/chess/.venv/bin/python; SL=$P/sl_base.pt
 TB="$HOME/projects/chess/data/syzygy_3-4-5:$HOME/projects/chess/data/syzygy_6"
 SF=$HOME/local_stockfish_linux_latest/stockfish/stockfish-ubuntu-x86-64-bmi2
@@ -697,7 +700,13 @@ for d in stage_a prelaunch operator; do (cd $SB7/$d && sha256sum -c --quiet SHA2
 cd $TW && [ "$(git rev-parse HEAD)" = "$TSHA" ] || exit 96
 $PY scripts/build_production_extensions.py || exit 1
 git diff --quiet 0c795fb7a $TSHA -- chess_anti_engine/encoding chess_anti_engine/moves chess_anti_engine/replay/packed_zarr.py \
-  chess_anti_engine/model chess_anti_engine/inference.py chess_anti_engine/uci/model_loader.py || exit 1
+  chess_anti_engine/model chess_anti_engine/uci/model_loader.py || exit 1
+[ "$(git diff 0c795fb7a $TSHA -- chess_anti_engine/inference.py | sha256sum | cut -d' ' -f1)" = \
+  450ed0ac058768891dd5d1c0c1fb36faecf85e8ead2286090072f0815a600a9c ] || exit 1   # = #1511's merged diff (addendum 1)
+[ "$(git diff ea56911fc $TSHA -- chess_anti_engine/simple_rl/collect.py | sha256sum | cut -d' ' -f1)" = \
+  4cb2132ae5c0606678739e0f5d619fe1534db07e7347106392cfaaca4213a425 ] || exit 1   # = #1511's merged diff (addendum 1)
+git diff --quiet ea56911fc $TSHA -- chess_anti_engine/train chess_anti_engine/replay \
+  chess_anti_engine/mcts/_position_dag.h || exit 1
 [ "$(git diff 0c795fb7a $TSHA -- chess_anti_engine/mcts/_mcts_tree.c | sha256sum | cut -d' ' -f1)" = \
   532650fa74776bf0cdc27f4d9cb5f4875733d41e14d25d4b86c370e1de5e5f8b ] || exit 1
 [ "$(git diff 0c795fb7a $TSHA -- chess_anti_engine/replay/shard.py | sha256sum | cut -d' ' -f1)" = \
@@ -770,3 +779,96 @@ $PY $SB/stage_b/stage_b_verdict.py $SB7/arenas/sib_$X/pool.json > $SB7/arenas/si
 - **Part 2 never launches** (#1511 not merged, disk rule fails, or the owner declines): Part 1's readings stand on
   their own. B5's condition counts B3 and B4 as not run. The owner's form remains untested at full width, and the
   record says so.
+
+## Addendum 1 (2026-11-26): `TSHA` moves to #1515's merge; the memory-smoke rules as built
+
+**Scope.** This addendum does two things:
+- it moves `TSHA` (precondition P2: #1515 merged), with guards (a)/(b) re-checked by the diff argument the record
+  registered;
+- it states the memory-smoke rules exactly as the staged `sib_mem_smoke.py` implements them.
+
+It does **not** clear Part 1 for launch. Preconditions P1, P3, P5 and the rest of P4 (`cost_probe.py` rev 4,
+`grad_scale.py` v2 → `strengths.json`) are built and sha-pinned in their own addendum. No GPU work was run for this
+one.
+
+### `TSHA` = `27206434a988a121f83eb950dd3aabb97c5b8cfa` (the merge of #1515)
+
+**Order.** #1511 merged first (`0d4d11572`), before #1515 (`27206434a`), so the record's `inference.py` clause
+applies. Each guard below was re-checked on 2026-11-26 with `git` against the commits named:
+
+| Check (PIN = `0c795fb7a`) | Result |
+|---|---|
+| empty diff PIN → `TSHA` over `encoding/`, `moves/`, `replay/packed_zarr.py`, `model/`, `uci/model_loader.py` | empty |
+| `inference.py` diff PIN → `TSHA` | sha256 `450ed0ac…` = #1511's merged diff (`git diff 0d4d11572^1 0d4d11572`), byte-equal; nothing else |
+| `_mcts_tree.c` diff PIN → `TSHA` | `532650fa…`, unchanged from the record |
+| `_position_dag.h` PIN → `TSHA` | unchanged |
+| `replay/shard.py` diff PIN → `TSHA` | `418b6e96…`, unchanged (#1477's optional field) |
+| `train/`, `replay/` `ea56911fc` → `TSHA` | unchanged |
+
+**Training-path changes `ea56911fc` → `TSHA`** (`git diff --name-only ea56911fc 27206434a -- chess_anti_engine
+scripts/simple_rl_loop.py`):
+
+| File | From | Top-level definitions changed | On the training path? |
+|---|---|---|---|
+| `simple_rl/learn.py`, `simple_rl/sibling.py` | #1515 | `build_sibling_term`, `train_generation` (learn); the term's per-step counters (sibling) | yes, intended: P2's one constructor. `load_window`, `prepare_targets`, `plan_batches`, `ScheduledSampler`, `holdout_mask` are byte-unchanged |
+| `simple_rl/collect.py` | #1511 (its diff `ea56911fc` → `TSHA` is byte-equal to #1511's merged diff, sha256 `4cb2132a…`) | `CollectSettings` (+ `eval_chunk_rows`), `validate_settings`, `realised_eval_chunk_rows`, `_evaluator`, `_combined_evaluator_record`, `evaluator_graph_record`, `check_vram`, `vram_need_gib`, and the constants `COLLECT_CUDA_GRAPH_MAX_ROWS`, `COLLECT_MAX_EVAL_CHUNK_ROWS`, `_VRAM_FIT_ROWS_PER_BOARD` | no: collect and evaluator only. The row loaders `learn.py` uses (`generation_shards`, `load_generation_rows_where`, `load_generation_rows`, `gather_rows`, `shard_row_meta`, `concat_arrays`) are byte-unchanged (compared per definition with `ast`) |
+| `simple_rl/reference.py` | #1511 | `EXECUTION_ONLY_SETTINGS` gains `eval_chunk_rows` | the `--collect-from` check only: a source sealed before the flag has no such key, and the exemption keeps it referenceable |
+| `scripts/simple_rl_loop.py` | #1511 | the `--eval-chunk-rows` flag, passed to `CollectSettings`; its legacy default `None` | no: collect settings only |
+
+**Deviation from the record's projected hunk list, stated.** The record (guard (b)) listed #1511's `collect.py`
+hunks before #1511 had settled. Against the merged diff:
+- `realised_eval_max_batch` is in fact `realised_eval_chunk_rows`;
+- `vram_need_gib` and `_combined_evaluator_record` are added to the list;
+- `proc_openings` and `common` are not touched.
+
+The argument does not change: no hunk is in a row loader, and the step-0 lines above check that mechanically.
+
+**Step 0's commands are updated in place** (Commands, above):
+- the `TSHA` line;
+- `inference.py` leaves the empty-diff list, and its sha-pinned #1511 diff is checked instead;
+- the `collect.py` diff `ea56911fc` → `TSHA` is pinned to #1511's;
+- `train/`, `replay/` and `_position_dag.h` are checked unchanged from `ea56911fc`.
+
+Guard (d) (`check_load.py`, PIN vs `TSHA`, bit-equal) runs at step 3 as registered. It does not call `inference.py`.
+
+### The memory smoke as built (P4, smoke part)
+
+`SB7/prelaunch/sib_mem_smoke.py`, staged at sha256 `2eb7205b…`. Its harness is `test/smoke_test.sh` (`e6cb520a…`):
+38/38 on the unmutated control. Its mutant set `test/mutants_smoke.json` (`90cef459…`, runner `mutants.py`
+`aaec0d68…`) has 22 mutants. The first full pass (2026-11-22) killed 21. M11 survived because its case was
+refused first by the stem/chunk rule; the case now runs at chunk 32 and checks the marker message.
+- The M11-only rerun (2026-11-25) killed M11, and its control passed.
+- A full rerun on the current harness was started and stopped, by the coordinator's CPU hold, after its control
+  passed and M1–M17 were all killed.
+- **M18–M22 are pending on the current harness.** They were killed in the 2026-11-22 pass, whose harness differed
+  only in M11's case. The full result is added here before launch.
+
+Each
+rule below has at least one case in the harness and a mutant that removes it:
+
+- **A part is never mixed** (edited into the seal paragraph above). The seal gives ONE chunk C per part. If any cell
+  aborted at 64, every sibling cell of that part trains at 32, including a cell that passed at 64.
+- **The fallback is per cell.** Only a cell whose OWN chunk-64 JSON reads ABORT gets a `_c32` run, and only while
+  `MEM_ABORT_C64_part<k>` exists. A cell whose chunk-64 smoke passed is refused a `_c32` run even with the marker
+  present.
+- **"Died" means a memory error only.** An update counts as died (an ABORT) only for `torch.OutOfMemoryError` or a
+  message containing `out of memory`, `CUBLAS_STATUS_ALLOC_FAILED`, `CUBLAS_STATUS_INTERNAL_ERROR` or
+  `CUDACachingAllocator`. Revision 6's step 1b died with `CUBLAS_STATUS_INTERNAL_ERROR` before its OOM, so that
+  string is included. Any other exception re-raises and exits non-zero, not 3, so a code bug never buys a chunk-32
+  run.
+- **The wrapper turns every non-verdict exit into `HOLD_MEM`.** That includes a stem refusal: the operator line
+  writes `HOLD_MEM` for any exit other than 0 and 3. So re-running step 1b after a chunk-64 PASS holds for the owner,
+  by design, and does not silently continue. The operator never re-runs step 1b; only the owner clears `HOLD_MEM`.
+- **The `_c32` command relies on argparse's last-flag-wins, and a guard checks it.** The fallback line appends
+  `--sibling-chunk-pairs 32` to the cell's flags, which already carry `--sibling-chunk-pairs 64`. argparse keeps the
+  last value. The smoke then refuses unless the REALISED chunk matches its stem: `mem_smoke_<cell>` at 64, and
+  `mem_smoke_<cell>_c32` at 32. A reordering that left 64 last is refused with "must run at chunk 32", and that case
+  is in the harness. The term's own `chunk_pairs` counter is also asserted equal to the parsed setting on every
+  update, so the value reaches the consumer.
+- **The markers come only from the smoke's own verdict.** An ABORT at 64 writes `MEM_ABORT_C64_part<k>`, an ABORT at
+  32 writes `HOLD_MEM`, and both exit 3. The seal reads only the smokes' JSON. It refuses a CPU logic smoke, or a
+  JSON whose realised chunk differs from its stem, and it never overwrites.
+
+The staged scripts are sealed into `SB7/prelaunch/SHA256SUMS` when `SB7` is created from the staging directory. That
+happens at launch, after this addendum and the remaining preconditions' addendum have merged.
+
