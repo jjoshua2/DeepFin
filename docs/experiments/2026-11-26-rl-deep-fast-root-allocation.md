@@ -537,7 +537,7 @@ HOME, a fake `nvidia-smi`, and `test/fake_collect_a.py` in place of the collect.
 top-up, cost; doses from the report and the realised clocks; seeds and flags reaching the collect; D/C in
 [0.9, 1.1]; scans banked), a relaunch that skips every done step, and the refusals: no GO (90), `CUDA_VISIBLE_DEVICES`
 empty (94), Stage 0 unfinished (91), a tampered stage-2 file (93), an interrupted step (87), and the clear (finished
-step refused, unfinished moved aside, rerun). Its result is posted on the PR.
+step refused, unfinished moved aside, rerun). Its result is posted on the PR: **11 of 11 pass** (#1539).
 
 ## Stage 2 phase B addendum: pool, train, fits, bake, matches, verdicts (2026-11-26)
 
@@ -589,14 +589,15 @@ for both arms, a choice the record did not make; it keeps the calibration data i
 - `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/verdicts3_v2_fixtures.py` [`d75c6520`]: v1's 23 readings plus a co-resident GPU job, a missing
   `cost_scan.json`, and a broken seat log that neither aborts nor changes Readout A and is recorded in the check.
   **27 of 27 pass.**
-- **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/harness_phase_b.sh` [`d76ea3ef`], run when the GPU is free): a
+- **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/harness_phase_b.sh` [`5c108831`], run when the GPU is free): a
   fake HOME with a finished fake phase A (sealed run dirs at the pin, the real `kC_baked.pt`), a fake `nvidia-smi`,
   and `test/fake_phase_b.py` in place of the GPU and heavy steps only; the pool tool, the completion checks, the
   seat checker, `opt_check.py`, `recal_bounds.py`, the guard and `verdicts3_v2.py` are real. It proves a correct run
   through all twelve steps to `verdicts.json`, a relaunch that skips every step, a run whose D screen reads damage
   (D "damage (screen)", C still read, Readout A unread), and the refusals: no GO (90), `CUDA_VISIBLE_DEVICES` empty
   (94), phase A unfinished (91), a tampered phase B file (93), an interrupted step (87), and the mover's refusals. Its
-  result is posted on the PR.
+  result is posted on the PR: **13 of 13 pass** (#1540). The first attempt broke on an unquoted `PATH`
+  holding a space; only the harness script was fixed (it is not in `SHA256SUMS`; its sha256 moved from `d76ea3ef`).
 
 **Registered decisions** (the coordinator accepted each; one line of reasoning apiece):
 - **Snapshots at (U + 1) // 2 and U:** R2 then compares the final net with the half-way net, which is the control's
