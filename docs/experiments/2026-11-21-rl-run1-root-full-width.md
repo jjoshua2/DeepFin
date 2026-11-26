@@ -1,5 +1,7 @@
 # 2026-11-21: RL run 1 — full-width root round (`--root-full-width`): cost, target audit, search strength, training test (pre-registration)
 
+**Result (2026-11-26): KILLED at Stage 1. By the registered rule, the equal-cost target is worse than knob-off, so the record stops; Stages 2–3 were not run. See [Results and verdict](#results-and-verdict-2026-11-26-killed-at-stage-1-the-record-stops).**
+
 **Status: registered, not launched; re-pinned to `0d4d11572275095f883f22df17d5b7f25683e41b` (forward chunking, PR #1511) by
 [Addendum 2](#addendum-2-2026-11-22-the-re-pin-to-forward-chunking-and-a-second-full-width-arm-c-wide-candidates),
 which also makes the registered full-width arm the wide arm, `fw_wide`.**
@@ -31,6 +33,158 @@ reorders.
 
 **Recovery:** nothing live changes. No yaml, no live tree and no deployed code is involved. Every output goes to a
 new bank.
+
+## Results and verdict (2026-11-26): KILLED at Stage 1, the record stops
+
+**Verdict: STOP.** By the registered Stage 1 rule, the `fw_wide` target at equal cost (`MSEQon`, 33 sims) is
+worse than the knob-off 64-sim target. On the paired expected cp loss against deep SF 8M it is worse by
+**+2.15 cp [+0.13, +4.13]**, which is more than seed noise. Per Addendum 2 there is no fallback arm. Stages 2 and 3 were not run.
+
+Read in the same session as the readout. Stage 0 exited 0 at 2026-11-26 00:53:12 EST and Stage 1 at 00:59:21 EST
+(`RFW/stage0/stage0_all.exit`, `RFW/stage1/stage1_all.exit`).
+
+### Stage 0: cost (five legs, ABBA then step B)
+
+`RFW/stage0/summary.jsonl` [`cebc9f1a`] and `RFW/stage0/decision.json` [`293b4eeb`]. Each leg is 3 processes ×
+128 games in flight, 1,152 games, the SL base at `0d4d11572`. All five legs ran under the nested guard, with 0
+buffer flushes. Every realised gate held: leaf buffer = 128 × 2 × topk, chunk rows 512, 0 eager forwards. The
+`env.observed` files are identical across legs: empty (no observed-prefix variable set) in all five legs.
+
+| Leg | Sims | Knob | topk | Rows | Steady rows/s | Whole-wall rows/s | Mean prelude visits | Forwarded rows / stored row | GPU util | Peak MiB |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| r01 | 64 | off | 16 | 109,907 | 152.0 | 147.8 | — | 69.4 | 92.4% | 10,152 |
+| r02 | 64 | on | 32 | 105,124 | 99.2 | 100.4 | 25.8 | 103.0 | 94.9% | 11,068 |
+| r03 | 64 | on | 32 | 105,124 | 99.1 | 100.7 | 25.8 | 103.0 | 95.5% | 11,002 |
+| r04 | 64 | off | 16 | 109,907 | 152.6 | 149.9 | — | 69.4 | 93.9% | 9,784 |
+| r05 | 33 | on | 17 | 107,525 | 153.5 | 151.1 | 25.9 | 66.9 | 92.8% | 11,412 |
+
+- **Decision:**
+  - t_off64 = 0.006565 s per stored row and t_on64 = 0.010086, so on@64 costs 1.536× off@64.
+  - The prelude is 25.8 visits, so step B gives S1 = 33. One run of on@33 gave a ratio of 0.9927, inside ±0.015.
+  - So **S_eq = 33**, with no step C.
+  - The ABBA gaps were 7.4–7.6 s, against a 900 s limit, with no guard wait.
+- Read plainly: at equal wall per stored position, the full-width round leaves 33 sims for sequential halving
+  where knob-off has 64.
+
+### Stage 1: target audit (2,433 leak-free rows, 190 games; deep SF 8M and the Ceres ruler)
+
+`RFW/stage1/scores/scores.json` [`9969fa7d`], `RFW/stage1/verdict.json` [`94700f40`], `RFW/stage1/stage1_bank.npz`
+[`aae1ffae`]. CIs are 95% game-clustered bootstrap intervals. The PRIMARY measure is `exp_cp_lb`, the expected cp
+loss against deep SF in which unscored moves get the 10th-best regret as a lower bound. Lower is better.
+
+Per arm:
+
+| Arm | `exp_cp_lb` (cp) | p(best) summed | top-1 = best | CE(best) | Entropy | p(best) < 1e-4 | Unscored mass |
+|---|---|---|---|---|---|---|---|
+| `M64off` (64 sims, knob off) | 29.73 [25.81, 34.03] | 0.6541 | 0.6938 | 1.184 | 0.766 | 0.0144 | 0.0180 |
+| `M64on` (`fw_wide`, 64 sims, topk 32) | 30.38 [26.17, 34.87] | 0.6508 | 0.6921 | 1.207 | 0.792 | 0.0169 | 0.0220 |
+| `MSEQon` (`fw_wide`, S_eq 33, topk 17) | 31.88 [27.65, 36.56] | 0.6460 | 0.6921 | 1.164 | 0.824 | 0.0111 | 0.0233 |
+| `R64n_banked` (reproduction reference) | 29.66 [25.73, 33.94] | 0.6548 | 0.6942 | 1.179 | 0.766 | 0.0148 | 0.0183 |
+
+Paired against `M64off` (arm minus `M64off`, same rows):
+
+| Contrast | `exp_cp_lb` | p(best) summed | top-1 = best | CE(best) | p(best) < 1e-4 | Unscored mass | Ceres top-1 | Ceres expected loss |
+|---|---|---|---|---|---|---|---|---|
+| `MSEQon − M64off` (**registered**) | **+2.151 [+0.134, +4.132]** | −0.0081 [−0.0135, −0.0026] | −0.0016 [−0.0122, +0.0084] | −0.020 [−0.066, +0.028] | −0.0033 [−0.0070, 0.0000] | +0.0053 [+0.0035, +0.0073] | −0.0045 [−0.0182, +0.0088] | +0.0023 [+0.0006, +0.0041] |
+| `M64on − M64off` (report-only) | +0.653 [−0.887, +2.195] | −0.0033 [−0.0082, +0.0019] | −0.0016 [−0.0112, +0.0078] | +0.022 [−0.020, +0.067] | +0.0025 [−0.0004, +0.0058] | +0.0040 [+0.0022, +0.0059] | −0.0033 [−0.0155, +0.0079] | −0.0002 [−0.0016, +0.0011] |
+| `R64n_banked − M64off` (control) | −0.075 [−0.286, +0.145] | +0.0007 [−0.0005, +0.0021] | +0.0004 [−0.0033, +0.0039] | −0.005 [−0.013, +0.002] | +0.0004 [0.0000, +0.0013] | +0.0003 [0.0000, +0.0006] | −0.0012 [−0.0061, +0.0036] | 0.0000 [−0.0003, +0.0003] |
+
+**The rule, verbatim from the registration (`stage1_decide.py`; the rationale sub-bullets are under [Stage 1](#stage-1--audit-first-claudemd-rule-5-gpu--015-h-then-cpu)), with each gate's result:**
+1. **Code-base control.** `M64off` must reproduce banked R64n: top-1 agreement ≥ 0.95, and a paired `exp_cp_lb` CI
+   that contains 0. Otherwise **UNREAD**, stop.
+   - **Passed:** top-1 agreement 0.9737, paired −0.075 [−0.286, +0.145].
+2. **Coverage.** The paired mean of mass on moves deep SF did not score, `MSEQon − M64off`, must be ≤ +0.01.
+   Otherwise **UNREAD** until an SF top-up amendment.
+   - **Passed:** +0.0053.
+3. **Kill: STOP iff** the paired `MSEQon − M64off` on `exp_cp_lb` has LB95 > 0 **and** its estimate is above +1.2 cp.
+   - **Fired:** LB95 +0.134 > 0, and the estimate +2.151 > +1.2.
+4. Otherwise **PROCEED**.
+
+Verdict as written by the script: "STOP: the registered arm's target is worse than knob-off by more than seed
+noise".
+
+**Descriptive secondaries** (report-only; none of them enters the rule):
+- **Entropy rose** from 0.766 (`M64off`) to 0.824 (`MSEQon`); `M64on` was 0.792. The equal-cost target is flatter and
+  puts less mass on SF's best move (p(best) summed −0.008).
+- **Near-best alternatives starve less.** Among alternatives within 10 cp of the best (top-1 excluded), the share
+  starved below 1e-4 fell from 9.1% to 7.7% (`M64on` 9.0%).
+- **Coverage widened, child values did not get worse.**
+  - Children per row went from 8.3 to 9.4.
+  - Child-value error vs deep SF on the common child set is unchanged: 0.1261 off against 0.1257 for `MSEQon` and
+    0.1251 for `M64on`.
+  - Pair ordering on knob-off's visited set moved from 0.8605 to 0.8659 (`MSEQon`) and 0.8671 (`M64on`).
+- **The independent ruler agrees in direction.** Ceres expected loss is +0.0023 [+0.0006, +0.0041] for `MSEQon`, and
+  null for `M64on`.
+
+**What the verdict licenses.**
+- It licenses exactly this: the registered rule fired, and a fired rule licenses stopping, nothing stronger. With
+  the SL base as actor, the full-width root round at equal collect cost gives a training target that is worse than
+  knob-off at 64 sims by the rule's measure: deep SF 8M (primary), and in direction the searched Ceres reference.
+  "Worse" is meant only in that sense. The record therefore stops.
+- **The kill is fragile, and the record says so.** The primary is driven by its tail:
+  - 44 rows with |d| > 100 cp carry 2,586 of the 5,234 cp-row total;
+  - the median per-row difference is +0.002 cp;
+  - the three largest rows are +998, +841 and +826 cp.
+  - Leaving out the single largest game gives +1.736 [−0.128, +3.715], and dropping the two largest gives +1.335
+    [−0.505, +3.141].
+  - The estimate sits 0.95 cp above the 1.2 cp threshold.
+  - Sources: the reviewer's recompute, `RC/results-review-1529/s1_recompute.out` [`1c3d41ff`], and the author's check
+    from the bank's per-row scores, `RC/results-review-1529-author/s1_fragility.out` [`d7ea1379`].
+- It is a **target-quality audit verdict, not a strength test.** No arena (Stage 2) and no training generation
+  (Stage 3) was run, so it says nothing about Elo either way.
+- It says nothing about wider search at much higher sims, about a budget-neutral round 0 (the unbuilt option
+  below), or about full width with a different value target.
+- At matched sims (`M64on`, 64 sims, 1.54× the cost) the target is not distinguishable from knob-off
+  (+0.65 [−0.89, +2.20]). The loss at equal cost is consistent with the sims the prelude takes away, but does not
+  isolate it: `MSEQon` differs from `M64on` in sims (33 against 64) **and** in topk (17 against 32), and the `M64on`
+  contrast's CI reaches +2.2.
+
+**What this closes and what it leaves open.**
+- **Closed:** `fw_wide` (full width plus widened candidates) at the pilot's 64-sim budget, with the SL base as
+  actor. Its equal-cost target is worse by the registered rule, so no generation was trained.
+- **Open, each needing its own record:**
+  - an ordering-only use of the wider root statistics (the sibling screen's question; coverage and ordering did
+    rise here);
+  - full width at a budget where the prelude is a small share of the sims;
+  - a budget-neutral round 0;
+  - full width at topk 16 (arm B), never measured: Addendum 2 replaced it before any stage ran.
+
+### The bank fixes made during the launch (2026-11-25/26)
+
+Two launches failed before Stage 0 produced a row. Both were fixed in the bank by verified copy (staging, then the
+real bank, `cmp` and `sha256sum -c` after each step), and neither changed a measurement.
+1. **Refused, 23:20 EST, before any run dir** (`RFW/stage0/stage0_all.refused_20261125T2320.log` [`2c87f815`]).
+   - `gpu_scan.sh` v6 refused on "cannot read the fd links of pid 232399".
+   - That pid was a non-dumpable **zombie** left by a job bridge that does not reap. A zombie holds no file descriptors.
+   - **`gpu_scan.sh` v7** skips a State-Z process with a NOTE. It also skips a process whose `/proc` entry is gone.
+     Anything else unreadable still refuses.
+   - Checked directly with a real non-dumpable zombie:
+     - v7: skipped, scan rc 0. The same zombie beside a live non-dumpable process still refuses on the live one.
+     - v6: refused exactly as on the host.
+   - The live host scan under v7 skipped 80 such zombies and returned clean.
+   - The generation-2 and sibling banks keep their older scan.
+2. **Crashed, 23:36:56 EST, after about 12.5 minutes of r01 collect (process walls 747.8–752.3 s in `stats.json`)**
+   (`RFW/stage0/stage0_all.crashed_20261125T2337.log` [`3527d5e5`]).
+   - The post-run block read `collect/procs/00/games.jsonl`, but the collect at this pin removes `procs/` when it seals.
+   - **`run_stage0.sh` v10** reads the sealed `collect/games.jsonl`, and refuses if its count differs from
+     `stats.json`.
+   - Its 1 s sampler counts the sealed file once `procs/` is gone, where v9 read 0.
+   - The post-run block carries game counts forward as a running maximum, so finish-time lookups stay monotone.
+   - r01 was moved aside by `clear_step.sh` (`RFW/stage0/runs/aborted_20261125T233947.TXwK/`) and rerun whole. Its t0
+     and t1 were not on disk, and v10's `s0_inputs` differ, so the bank's own reuse rule could not have kept it.
+   - **Why the harness missed it:** its stub collector kept `procs/`, so v9's read passed there and failed on the
+     real collect. That is the "a correct run fails" class.
+   - **Harness changes:**
+     - v16 adds the two zombie cases;
+     - v17's stub seals as the real collect does (moves the games file, removes `procs/`) and records the sealed
+       path in its manifest.
+3. **Neither harness version has been run.**
+   - v17 was started once at 00:59 EST and killed at 01:00:49 when the GPU was handed to another run; it gave no
+     verdict.
+   - Both wait for an idle window.
+   - The last completed pass is v15's 213 / 213.
+   - The early-exit mutant series at the re-pin was stopped by owner decision at 32 of 120 caught (see
+     [the mutant series](#the-mutant-series-at-the-re-pin-runner-v121-early-exit)).
 
 ## Why
 
@@ -607,7 +761,7 @@ scripts/verify_evidence_stamps.py --quiet docs/experiments/2026-11-21-rl-run1-ro
 | `RFW/seat_state.py` [`15022d1b3aa5`] | v3 | `RFW/seat_state.py.v2` [`730a1c958edf`], `RFW/seat_state.py.v1` [`1577deaa9a97`] |
 | `RFW/clear_step.sh` [`e6a3f324e61e`] | v4 | `RFW/clear_step.sh.v3` [`e2df58427ed4`], `RFW/clear_step.sh.v2` [`dd07013a9641`], `RFW/clear_step.sh.v1` [`4ace011c377f`] |
 | `RFW/verify_outputs.py` [`50ca4fa4b77c`] | v1 | — |
-| `RFW/stage0/run_stage0.sh` [`69faf7ac40a6`] | v9 | `RFW/stage0/run_stage0.sh.v8` [`7d4ff2022a2d`], `RFW/stage0/run_stage0.sh.v7` [`4f851a9c9c4f`], `RFW/stage0/run_stage0.sh.v6` [`8aafea169066`], `RFW/stage0/run_stage0.sh.v5` [`eb1dd4d3163b`], `RFW/stage0/run_stage0.sh.v4` [`205bd4f0db30`], `RFW/stage0/run_stage0.sh.v3` [`d0e3bcb6952b`], `RFW/stage0/run_stage0.sh.v2` [`39303c3d7620`], `RFW/stage0/run_stage0.sh.v1` [`a84f4c7cfa63`] |
+| `RFW/stage0/run_stage0.sh` [`8ef965802a24`] | v10 | `RFW/stage0/run_stage0.sh.v9` [`69faf7ac40a6`], `RFW/stage0/run_stage0.sh.v8` [`7d4ff2022a2d`], `RFW/stage0/run_stage0.sh.v7` [`4f851a9c9c4f`], `RFW/stage0/run_stage0.sh.v6` [`8aafea169066`], `RFW/stage0/run_stage0.sh.v5` [`eb1dd4d3163b`], `RFW/stage0/run_stage0.sh.v4` [`205bd4f0db30`], `RFW/stage0/run_stage0.sh.v3` [`d0e3bcb6952b`], `RFW/stage0/run_stage0.sh.v2` [`39303c3d7620`], `RFW/stage0/run_stage0.sh.v1` [`a84f4c7cfa63`] |
 | `RFW/stage0/run_stage0_all.sh` [`89a04df9ae8f`] | v6 | `RFW/stage0/run_stage0_all.sh.v5` [`5163ea29e2cb`], `RFW/stage0/run_stage0_all.sh.v4` [`09c9eea07472`], `RFW/stage0/run_stage0_all.sh.v3` [`0d9a81de48f5`], `RFW/stage0/run_stage0_all.sh.v2` [`98a9bea18970`], `RFW/stage0/run_stage0_all.sh.v1` [`51482410ec7c`] |
 | `RFW/stage0/stage0_decide.py` [`ff08b661fa46`] | v7 | `RFW/stage0/stage0_decide.py.v6` [`d2ae12874881`], `RFW/stage0/stage0_decide.py.v5` [`cf5e1cbb397f`], `RFW/stage0/stage0_decide.py.v4` [`f61952c2b32a`], `RFW/stage0/stage0_decide.py.v3` [`4771354e2117`], `RFW/stage0/stage0_decide.py.v2` [`4c02fc7565dd`], `RFW/stage0/stage0_decide.py.v1` [`fb099bed9a35`] |
 | `RFW/stage0/fab_test/run_fab.py` [`8068235ca3d1`] | v4 | `RFW/stage0/fab_test/run_fab.py.v3` [`5360bc2ceb99`], `RFW/stage0/fab_test/run_fab.py.v2` [`3abfd33405ac`], `RFW/stage0/fab_test/run_fab.py.v1` [`93e32555a306`] |
@@ -615,16 +769,16 @@ scripts/verify_evidence_stamps.py --quiet docs/experiments/2026-11-21-rl-run1-ro
 | `RFW/run_rfw_match.sh` [`73340cd07d91`] | v7 | `RFW/run_rfw_match.sh.v6` [`29aedb0040c9`], `RFW/run_rfw_match.sh.v5` [`e8e85a601c32`], `RFW/run_rfw_match.sh.v4` [`91ef5a8f87ed`], `RFW/run_rfw_match.sh.v3` [`b24a435b24e5`], `RFW/run_rfw_match.sh.v2` [`0487d857e379`], `RFW/run_rfw_match.sh.v1` [`0c192e052082`] |
 | `RFW/stage2/run_stage2.sh` [`e38254f18e38`] | v9 | `RFW/stage2/run_stage2.sh.v8` [`49c17f057987`], `RFW/stage2/run_stage2.sh.v7` [`a9d05768c5c9`], `RFW/stage2/run_stage2.sh.v6` [`d6839c0ca884`], `RFW/stage2/run_stage2.sh.v5` [`e831f6274f47`], `RFW/stage2/run_stage2.sh.v4` [`174495f8c6eb`], `RFW/stage2/run_stage2.sh.v3` [`ba70d73eb7b7`], `RFW/stage2/run_stage2.sh.v2` [`c07fe428aa39`], `RFW/stage2/run_stage2.sh.v1` [`5ba517c5ae0e`] |
 | `RFW/stage3/launch_stage3.sh` [`4efa17765d61`] | v9 | `RFW/stage3/launch_stage3.sh.v8` [`f154bdbe7bda`], `RFW/stage3/launch_stage3.sh.v7` [`2880311d902c`], `RFW/stage3/launch_stage3.sh.v6` [`86494309a5f5`], `RFW/stage3/launch_stage3.sh.v5` [`b4a0cf0e46f8`], `RFW/stage3/launch_stage3.sh.v4` [`f5ea61297307`], `RFW/stage3/launch_stage3.sh.v3` [`8bfe478f0db8`], `RFW/stage3/launch_stage3.sh.v2` [`a519b39f2200`], `RFW/stage3/launch_stage3.sh.v1` [`95c8a66dbc59`] |
-| `RFW/gpu_scan.sh` [`b8197e6e9ca6`] | v6 | `RFW/gpu_scan.sh.v5` [`8b4261b0a653`], `RFW/gpu_scan.sh.v4` [`949408e727e7`], `RFW/gpu_scan.sh.v3` [`23a504a858bc`], `RFW/gpu_scan.sh.v2` [`38c6db9bbf69`], `RFW/gpu_scan.sh.v1` [`ec611f4b3a5d`] |
+| `RFW/gpu_scan.sh` [`d1aee351d16e`] | v7 | `RFW/gpu_scan.sh.v6` [`b8197e6e9ca6`], `RFW/gpu_scan.sh.v5` [`8b4261b0a653`], `RFW/gpu_scan.sh.v4` [`949408e727e7`], `RFW/gpu_scan.sh.v3` [`23a504a858bc`], `RFW/gpu_scan.sh.v2` [`38c6db9bbf69`], `RFW/gpu_scan.sh.v1` [`ec611f4b3a5d`] |
 | `RFW/check_shape.py` [`b615f28e9cab`] | v2 | `RFW/check_shape.py.v1` [`95ee428f58f9`] |
 | `RFW/stage1/stage1_search.py` [`63a06c5e250c`] | v2 | `RFW/stage1/stage1_search.py.v1` [`b928707dee79`] |
-| `RFW/guard_test/guard_test.sh` [`f2f3fdd85b1d`] | v15 | `RFW/guard_test/guard_test.sh.v14` [`9bceb5be1c9b`], `RFW/guard_test/guard_test.sh.v13` [`cb01663fa9f9`], `RFW/guard_test/guard_test.sh.v12` [`fe6ecc0ee08b`], `RFW/guard_test/guard_test.sh.v11` [`83a3b679efe0`], `RFW/guard_test/guard_test.sh.v10` [`78d1b3f40d22`], `RFW/guard_test/guard_test.sh.v9` [`167b79eeee93`], `RFW/guard_test/guard_test.sh.v8` [`c835c5280f1c`], `RFW/guard_test/guard_test.sh.v7` [`ac4196580a48`], `RFW/guard_test/guard_test.sh.v6` [`275c91d526df`], `RFW/guard_test/guard_test.sh.v5` [`d9b84ec2eba5`], `RFW/guard_test/guard_test.sh.v4` [`d4ad57efc6f3`], `RFW/guard_test/guard_test.sh.v3` [`b40b08d3d30c`], `RFW/guard_test/guard_test.sh.v2` [`730d515388e3`], `RFW/guard_test/guard_test.sh.v1` [`621a57547b22`] |
+| `RFW/guard_test/guard_test.sh` [`2306675681a1`] | v17 | `RFW/guard_test/guard_test.sh.v16` [`c381bf348715`], `RFW/guard_test/guard_test.sh.v15` [`f2f3fdd85b1d`], `RFW/guard_test/guard_test.sh.v14` [`9bceb5be1c9b`], `RFW/guard_test/guard_test.sh.v13` [`cb01663fa9f9`], `RFW/guard_test/guard_test.sh.v12` [`fe6ecc0ee08b`], `RFW/guard_test/guard_test.sh.v11` [`83a3b679efe0`], `RFW/guard_test/guard_test.sh.v10` [`78d1b3f40d22`], `RFW/guard_test/guard_test.sh.v9` [`167b79eeee93`], `RFW/guard_test/guard_test.sh.v8` [`c835c5280f1c`], `RFW/guard_test/guard_test.sh.v7` [`ac4196580a48`], `RFW/guard_test/guard_test.sh.v6` [`275c91d526df`], `RFW/guard_test/guard_test.sh.v5` [`d9b84ec2eba5`], `RFW/guard_test/guard_test.sh.v4` [`d4ad57efc6f3`], `RFW/guard_test/guard_test.sh.v3` [`b40b08d3d30c`], `RFW/guard_test/guard_test.sh.v2` [`730d515388e3`], `RFW/guard_test/guard_test.sh.v1` [`621a57547b22`] |
 | `RFW/guard_test/run_mutants_v11.py` [`d3136aea234f`] | v1 | — |
 | `RFW/guard_test/run_mutants_v12.py` [`d1bcefa298f3`] | v4 | `RFW/guard_test/run_mutants_v12.py.v3` [`39cf955c554b`], `RFW/guard_test/run_mutants_v12.py.v2` [`73689fcd2730`], `RFW/guard_test/run_mutants_v12.py.v1` [`3dc18b9b659b`] |
 | `RFW/addendum2/repin.py` [`7f9aa9f66f98`] | v2 | `RFW/addendum2/repin.py.v1` [`32fb348028cc`] |
 | `RFW/addendum2/operator_repin.sh` [`78670913dedc`] | v3 | `RFW/addendum2/operator_repin.sh.v2` [`10c04aef0ba3`], `RFW/addendum2/operator_repin.sh.v1` [`f7f81f66df2d`] |
 | `RFW/addendum2/bank_swap.sh` [`1069ede7ab74`] | v1 | — |
-| `RFW/SHA256SUMS` [`3b328898d389`] | v6 | `RFW/SHA256SUMS.v5` [`1bd3bec3f25f`], `RFW/SHA256SUMS.v4` [`5ebf76b14621`], `RFW/SHA256SUMS.v3` [`5905c14b95f4`], `RFW/SHA256SUMS.v2` [`5816a4677421`], `RFW/SHA256SUMS.v1` [`ac86aa6cbfe9`] |
+| `RFW/SHA256SUMS` [`d48e5cbc1a4e`] | v8 | `RFW/SHA256SUMS.v7` [`b76c5295cdd2`], `RFW/SHA256SUMS.v6` [`3b328898d389`], `RFW/SHA256SUMS.v5` [`1bd3bec3f25f`], `RFW/SHA256SUMS.v4` [`5ebf76b14621`], `RFW/SHA256SUMS.v3` [`5905c14b95f4`], `RFW/SHA256SUMS.v2` [`5816a4677421`], `RFW/SHA256SUMS.v1` [`ac86aa6cbfe9`] |
 
 **Addendum changes beyond the guard (2026-11-22):**
 - **Stage-0 series files.** `clear_step.sh stage0-block` now moves `decision.series.json` and
