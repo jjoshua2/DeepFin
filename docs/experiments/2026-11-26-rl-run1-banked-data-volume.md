@@ -377,10 +377,253 @@ rest of the primary match, then the k1 match.
 3. Every sourced or `cd` step ends in `|| exit 3`.
 4. The script pins its own sha256 and refuses to run on a mismatch.
 
-The operator scripts are not written yet. When they are, the staging harness gets a case and a mutant per item, and
-the launch addendum quotes the outcomes.
+All four are in `operator_volume.sh` and `opt_check.py`, with a harness case and a mutant each. The outcomes are in
+the launch addendum below.
 
-## Commands
+## Commands (launch addendum)
 
-Filled in by the launch addendum, from the staged scripts and their sha256. No command here runs before that
-addendum merges.
+This addendum is the run's only command source. Nothing runs before it merges and the coordinator writes `OWNER_GO`.
+Every Python stage runs at the pin `0c795fb7a` from its clean worktree `rl-run1-pilot-0c795fb7a`. The staged bank is
+`~/chess-artifacts/operations/rl-run1-volume.staging/bank/`, and the operator copies it verbatim to the run's bank
+directory, written `$V` below (`rl-run1-volume` beside the other `rl-run1-*` banks). The launcher, its library and
+its checks are adapted from generation 2's revision 6 bank. What changed is listed per file below.
+
+### What the bank does, step by step
+
+One command (`operator_volume.sh`) verifies the bank and launches `launch_volume.sh`. The launcher runs the steps
+below in order and stops at the first failure. Each step:
+- writes `<step>.inputs` (the sha256 of the launcher, the checks library, the flags file, the prelaunch sums, the seed
+  and every input file), then `<step>.started`, then `<step>.exit` ("<code> <time>");
+- has a completion check that re-reads data and inputs, not file existence (`volume_checks.sh`, `prelaunch/stage_checks.py`).
+
+On a relaunch a step is skipped only if all three hold: its exit is 0, its check passes, and its recorded inputs equal
+the inputs now. A mismatch refuses (84). It never skips.
+
+| Step | Device | Command (inside the launcher; `$COLLECT $TRAIN $ZQ` from `volume_flags.sh`) | Gate (refusal) |
+|---|---|---|---|
+| `pool` | CPU | `pool_collect.py kC $V/pool_kC`, bound to the merged admission record (sha256 `cdb1ab63`, the file on main); `test/pool_harness.py real $V/pool_kC kC`; `planned_updates.py $V/pool_kC plan.json --precheck -- $COLLECT $TRAIN $ZQ --snapshot-updates 1478,2189,3675`; `stage_checks.py pool` | read-back `RESULT … fail=0`; the PIN plan knowable and its precheck accepted; not built under a test override; admission sha256 = the pinned one; counts and the three digests = the staging measurement pool's; digests recomputed now; seed, games, actor and sources' manifests by sha256 (exit 1) |
+| `smoke` | GPU | MemAvailable ≥ 86 GiB, else `HOLD_HOST_RAM` (89); `TRAIN_MEM_SMOKE_RUN=$V/pool_kC train_mem_smoke.py $V/smoke_mem 3 $G1 $COLLECT $TRAIN $ZQ` | PASS with rows = the plan's trainable rows, run = the pool, 3 updates; ABORT or any other exit → `HOLD_MEM` |
+| `train` | GPU | MemAvailable ≥ 86 GiB (as above); `simple_rl_loop.py run --run-dir $V/arm_kC --collect-from $V/pool_kC --generations 1 $COLLECT $TRAIN $ZQ --snapshot-updates 1478,2189,3675 --pause-marker $V/STOP`; then `opt_check.py` (generation 2 revision 6's take-effect rule against generation 2's `arm_Zq2` fields) and `planned_updates.py` on the arm | optimizer check true; realised updates = the PIN's `planned_phase_updates` (5,151 expected, never a hand formula); snapshots exactly 1478, 2189, 3675; else `HOLD_TRAIN_CHECK` |
+| `fits` | GPU | `fit_value_recal.py --net <step_N or final model.pt> --reference $G1 --collect-dir $V/pool_kC/gen_0001/collect/ --holdout-frac 0.05 --device cuda --out $V/recal_<N|final>.json` for N = 1478, 2189, 3675 and the final | each fit: T and b finite, `cli` = "T,b", the net's and the reference's sha256 now, the pool's collect dir, hold-out 0.05 |
+| `bounds` | CPU | `recal_bounds.py $V $V/HOLD_RECAL 1478 2189 3675` | R1 (generation 2's box at every fit) and R2 (final vs 1,478, both ≤ 0.10); a miss → `HOLD_RECAL`, all fits banked |
+| `bake` | CPU | `bake_recal.py bake` then `verify` → `$V/kC_baked.pt` | baked sha256 = json = verify; source = the final model; T, b = the final fit |
+| `m_kC_vs_g1` | GPU | per seat, seed 2026112611: a 4-game smoke per seat, then seat A (6,400 games) to completion, then seat B (6,400) with the screen reader watching seat B's log | seat DONE (`seat_state.py`) both seats; result rows name the PIN and both nets' sha256; the PIN's `arena_seat_balanced_pool.py` → `pool.json`; screen damage → `STOP_SCREEN`, exit 80 |
+| `m_k1_vs_g1` | GPU | the same for `gen2_baked.pt` vs the parent, seed 2026112611 | as above, no screen |
+| `m_kC_vs_base` | GPU | only if `verdicts.py reading $V kC_vs_g1` prints `improves`; seed 2026112612 | as above |
+| verdicts | CPU | `verdicts.py final $V` → `verdicts.json`, `summary.txt` (temp file + rename) | — |
+
+Refusals before anything runs. None of these writes a marker:
+- `OWNER_GO` missing (90);
+- the guard missing (8) or not its pinned sha256 (93);
+- `CUDA_VISIBLE_DEVICES` set to empty (94);
+- the guard's own refusals (8): GPU memory outside the operator's idle ± 512 MiB, utilisation ≥ 10 % in 5 samples, a
+  GPU job found by the process scan, or no `volume idle_mib=<MiB>` release line;
+- the bank lock already held (9);
+- any `HOLD_*`, `smoke/HOLD_*`, `STOP` or `STOP_SCREEN` file (81);
+- a test-only variable in the environment (82);
+- the checks library, flags file, prelaunch `SHA256SUMS` (and every file it lists), the operator gate, the match
+  launcher, `pool_harness.py` or the PIN's `fit_value_recal.py` not its pinned sha256 (93);
+- `PIN.txt` not the PIN (97); the PIN worktree not at the PIN, or dirty (96);
+- a net not its registered sha256 (92);
+- the resume prescan: 84, 86, 87, 88, or 95 for a pool or arm directory with no `.started`.
+
+**Screen schedule** (the coordinator's decision):
+- the primary match plays seat A to completion, then seat B;
+- `screen.py` watches seat B's log and reads the screen once, as soon as every pair id < 200 has both halves in both
+  seats. That is 800 games, chosen by pair id, never by finishing order;
+- damage iff UB95 < 0. Damage writes `STOP_SCREEN` and SIGTERMs seat B's process group: the match stops (80), and
+  `verdicts.json` records damage;
+- otherwise seat B continues to 6,400, and the screen's games are counted once;
+- an unreadable or inconsistent screen (headers not a seat swap, openings that differ, no interval) writes
+  `HOLD_SCREEN` and stops seat B.
+
+The screen's statistic is the PIN pool script's own `pool_looks`, imported, on the selected pairs.
+
+**Decision:** the normal interval of `arena_seat_balanced_pool.py` over opening keys, per match. Readings:
+- damage iff UB95 < 0;
+- improves iff LB95 > 0;
+- adoptable iff LB95 > x(−10 Elo);
+- else unread.
+
+Contrast: D − 1.645 SE > 0, strictly. The bootstrap (B = 20,000, seed 2026112613, the opening key as the unit) is
+reported only and never decides.
+
+**Watchdog and resume:**
+- during smoke, train and fits, MemAvailable is sampled every 2 s. Below 6 GiB the watchdog appends to
+  `watchdog.history`, writes `STOP` and SIGTERMs the step's process group; a second stop in the bank also writes
+  `HOLD_WATCHDOG`;
+- train is never moved aside. The relaunch reruns the same command, and the PIN resumes from the newest snapshot (1478,
+  2189 or 3675). A kill before update 1,478 restarts the phase; a kill after it loses at most about 1,486 updates,
+  ≈ 8 min;
+- a match resumes per seat: a DONE seat is never replayed, and a PARTIAL seat stops until
+  `move_aside.sh <step> --seat A|B`;
+- any other failed or interrupted step stops until `move_aside.sh <step>`. It renames, never deletes.
+
+### Staged files (sha256)
+
+Every file below is in the staged bank. `SHA256SUMS` lists all of them; `prelaunch/SHA256SUMS` lists `prelaunch/`.
+The launcher pins the guard, the checks library, the flags file, `prelaunch/SHA256SUMS`, `pool_harness.py`, the
+operator gate, the match launcher and the PIN's `fit_value_recal.py`. `operator_volume.sh` pins its own sha256 and
+verifies the whole bank against `SHA256SUMS`.
+
+| File | sha256 | Origin |
+|---|---|---|
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/SHA256SUMS` [`424550da6c56`] | `424550da6c5680a423cf63941df75c336fd0fa8fce8487bee37caf24a89989ec` | every file of the bank |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/gpu_guard.sh` [`aaa51afcad66`] | `aaa51afcad66b5f590172b6524acdb9a6ddc4456028017830d9266296606952c` | generation 2's guard v3, renamed to `VOLUME_*`, stage `volume` |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/gpu_scan.sh` [`949408e727e7`] | `949408e727e7ccbf942dd28f58ad800f958267577a93822950529ac20734f466` | unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/launch_volume.sh` [`f6da0bea755f`] | `f6da0bea755fd4216a3efe28d0eac1a986f99ca9a18bc6459930227bfc7717c5` | generation 2's `launch_gen2.sh` v6: steps pool / smoke / train (snapshots, pause marker) / fits / bounds / bake / three matches / verdicts; RAM floor + watchdog; screen inside the primary |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/move_aside.sh` [`1a71108dffef`] | `1a71108dffef6b88e517319d7bb4f64ffb9cf4d07b51b677768faffb683ad9e3` | generation 2's v5: never train, never a whole match; `--seat A|B` |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/operator_volume.sh` [`f9e3f2b4133a`] | `f9e3f2b4133aad46ea973123f82e4b3fca103141c34e5d365e3ef9f83ea683ed` | the #1517 MINOR fixes 2-4 (idempotent, kept backups, `|| exit 3`, self sha256) |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/SHA256SUMS` [`f8e0abaebf1f`] | `f8e0abaebf1f170650363e04c4dc1d36395c6c07b9611062c397549c787d8483` | every file of `prelaunch/` |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/admission_record.md` [`cdb1ab63cdba`] | `cdb1ab63cdba4896c4c9677115484646c75fa5959d0784671c688e91f09f1b3d` | the merged admission record (#1523), byte-equal to main's |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/bake_recal.py` [`786bb537e0d1`] | `786bb537e0d1130ed2ae20bf81c7791239f4903095fd22a2f40840e3e8a06230` | generation 2's, unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/opt_check.py` [`4f8b306f72f8`] | `4f8b306f72f845dc7d5a4d687c41c74811d8f07c96bfd11dde4b2c7d991c55fc` | generation 2 revision 6's take-effect rule, moved into its own file |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/planned_updates.py` [`208995af153c`] | `208995af153ceacc3db7aa52e25cc914072394dd0fc089a3ba428bdc4fe901c4` | new: the PIN's `planned_phase_updates` / precheck / snapshot plan |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/pool_collect.py` [`66e2225c2006`] | `66e2225c2006878701dfa2e1b3dfcdb7922ce11b1ce3339aaa5d38b8a8209efe` | staging `a8e824d7` with `ADMISSION` / `ADMISSION_SHA256` set only |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/recal_bounds.py` [`c10c27e30b0b`] | `c10c27e30b0bf9fc5d957de19f8bb15429d1daaebd86cf71a80803bb53b631f7` | new: R1 (generation 2's box) + R2 |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/run_smoke.sh` [`8c3d545c7ba7`] | `8c3d545c7ba709ab0f6d7d9bfab5a5eda1ed83600bbe98e8ed3f6af284a8ad8b` | generation 2's runner, sources `volume_flags.sh` (standalone; the launcher runs the smoke inline) |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/screen.py` [`106f90becbe5`] | `106f90becbe5e881a7e1d529875aef0f681bd3caa6bf0a19f65050d47bc24989` | new: the damage-only screen reader |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/seat_state.py` [`a0f80af1286c`] | `a0f80af1286ca90d38eb6ddc77e84395292f0b8b0f73ad35654d579c842ceef0` | generation 2's, unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/stage_checks.py` [`a5ba3b131343`] | `a5ba3b131343e025a88794591bd3e8dac0751f05ab390ec961ea03afcc7b21e7` | generation 2's, plus `pool` / pool-chain `arm` / smoke / fits / bake / match modes |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/train_mem_smoke.py` [`2ce38774e589`] | `2ce38774e589c124266381b138ef9f7b689c2b9e2aace05e689c38d1a06d5c54` | generation 2's, unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/prelaunch/verdicts.py` [`f487d849300d`] | `f487d849300d89e2795d24a942f25fcfb2589c96a3e9e67e11792f51507c8118` | new: readings, contrast, bootstrap check |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/test/mutants.py` [`aaec0d680645`] | `aaec0d68064514be139c356c0a832d6d11f6dd281fee62510d7825d54263a6b8` | staging, unchanged |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/test/pool_harness.py` [`d3cc705d2757`] | `d3cc705d275707462bb8340e2e87ff32014317e1b76dfc9b1c1a5f85eefdd39e` | staging, unchanged (its `real` mode is the pool step's read-back) |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/volume_checks.sh` [`0676d7f46465`] | `0676d7f4646514f16392c6d9f422d4ac7f89623273c24fd9ca39f69ba7ad3bc1` | generation 2's `gen2_checks.sh`: paths, completion checks, inputs record, per-seat player with the screen sidecar |
+| `~/chess-artifacts/operations/rl-run1-volume.staging/bank/volume_flags.sh` [`a837b3db627a`] | `a837b3db627af066bbfbce70c2c280b34abe4e742c0a1f7c0f6fb2af04ae18d9` | generation 2's `gen2_flags.sh` with `--seed 2026112601`, `--games 27840` (TRAIN, ZQ byte-identical) |
+
+Read-only inputs, pinned by the launcher or the checks library:
+- `gen1_baked.pt` `8dd6ac8c`, `gen2_baked.pt` `5881d2af` and `sl_base.pt` `a39f900c` (92);
+- the operator gate `operator_gpu_check.sh` `2c4efb70` (93);
+- `rl-run1-followup/run_followup_match.sh` `7c8fd065` (93);
+- the PIN's `scripts/fit_value_recal.py` `37e27420` (93);
+- the PIN's `scripts/arena_seat_balanced_pool.py` `cfd72395`.
+
+### Proofs on real fixtures (CPU; no GPU; torch-importing runs inside a private mount namespace)
+
+Paths below are under `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/`.
+
+| What | Fixture | Outcome |
+|---|---|---|
+| Guard / launcher harness: every refusal in the addendum's table, a full correct run, per-seat resume, the screen inside the match, the watchdog, move-aside and the operator script. Run under a fake HOME in a private user + PID + mount namespace with stub `nvidia-smi` and fake GPU stand-ins; the real `stage_checks.py`, `seat_state.py`, `screen.py`, `recal_bounds.py`, `opt_check.py`, `verdicts.py` and the PIN pool script | generation 2's real `arm_Zq2` metrics and manifest as the trained arm | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/guard/out/unmutated.log` [`4e21316d6ec4`] (RESULT pass=202 fail=0) |
+| Mutant series over the launcher, library, guard, move-aside, operator and every gate script; each mutant disables or shifts one refusal or comparison | the harnesses in this table | **148 of 152 killed (144 assertion, 4 error)**. The 4 survivors are equivalent, with the reason stated. Every control passed: `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/mutants/FINAL.txt` [`dbde83fc5ce9`]; runs `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/mutants/out_v1/SUMMARY.txt` [`e43027fbfbed`], `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/mutants/out_v2/SUMMARY.txt` [`a7c1025fa5e3`], `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/mutants/out_v3/SUMMARY.txt` [`3c8598642e96`] |
+| Gates on generation 2's banked outputs: match, bake, fits, R1/R2, seat state, smoke rows. Each passes on the real file, and one wrong copy of each fails | generation 2's bank | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/realfix/gates_real.log` [`ba848613741d`] (RESULT pass=14 fail=0) |
+| Pool gate and the PIN's plan on the real pool, built by the pinned tool bound to the merged record | the five admitted banks | all 14 pool checks true; read-back 6/6; planned 5,151, trainable rows 2,636,964, precheck accepted; shard / games / starts digests `5cf545d7` / `774a61b6` / `a7c57baf` = the staging pool's: `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/realfix/realpool_build.out` [`2734b962272e`] (RESULT pass=6 fail=0), `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/realfix/realpool_digests.json` [`fa6d38918b70`] |
+| PIN plan on the staging pool (5,151 updates, 2,636,964 trainable rows, precheck accepted); pilot plan rows = generation 2's banked smoke rows | the staging pool, the pilot collect | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/realfix/plan_proofs.log` [`53ecae64e906`] |
+| Take-effect check (generation 2 revision 6's rule, plus R1 MINOR fix 1: each of group 0's three lr places perturbed alone) | generation 2's `arm_Zq2` and its first attempt; `gen1_baked.pt`'s saved groups (torch.load) | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/optcheck/out/unmutated.log` [`2cfc1945fbe0`] (RESULT pass=30 fail=0) |
+| Screen reader: reproduces generation 2's `g2_vs_g1` and `g2_vs_base` pool estimate, SE, n and CI exactly; reads pair ids < 200, not the first finished games; partial line in flight; not readable; damage; HOLD | generation 2's match logs | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/screen/out/unmutated.log` [`95a7125de463`] (RESULT pass=11 fail=0) |
+| Verdicts: every reading and contrast branch (strict bounds, 1.645 one-sided, exact-zero contrast), screen-stop; d(o) rebuilt from the real logs reproduces pool.json; bootstrap deterministic | fabricated pools; generation 2's logs | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/verdicts/out/unmutated.log` [`e641ae3a9d27`] (RESULT pass=34 fail=0) |
+| CPU kill-and-relaunch resume of the training step at the PIN (tiny model; aurora, hparams from the init checkpoint, zclip on, the TRAIN/ZQ flag shape, the snapshot list, the pause marker): SIGTERM to the group inside the zclip warm-up, then the same argv relaunched | the PIN's own test fixtures | `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/resume/out/none.log` [`a4ff06f4fbc7`] (RESULT pass=23 fail=0); mutants `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/resume/out/zclip_not_restored.log` [`90acc8efee55`] (RESULT pass=7 fail=1), `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/resume/out/zclip_buffer_short.log` [`edca671641b0`] (RESULT pass=22 fail=1), `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/resume/out/resume_state_dropped.log` [`07e3be05f558`] (RESULT pass=21 fail=2) |
+| The pool tool's staging suite after `ADMISSION_SHA256` was set: the control (24/24) and the two admission mutants | the 5-bank fixtures | control pass, 2 of 2 killed: `~/chess-artifacts/operations/rl-run1-volume.staging/test_launcher/pool_tool/mut_pool_v3_admission.out` [`854845080034`] |
+
+The real pool was built in a scratch directory with the pool step's exact commands, never in `$V`, and then deleted.
+The launcher builds its own pool. The resume test found that weights alone cannot see a lost zclip sample: the
+`zclip_buffer_short` mutant leaves the final weights bit-identical and is caught only by the zclip-state comparison.
+At the PIN, an exact resume refuses outright if the zclip state cannot be restored (`zclip_not_restored`).
+
+Defects the harness found in this bank, both fixed before the shas above:
+- `screen.py` was launched without `PYTHONPATH=.`, so every primary match would have stopped on `HOLD_SCREEN`;
+- the watchdog's `sleep` inherited the bank lock's fd 9, which held the lock for up to 2 s after a launch ended.
+
+### Operator runbook
+
+1. **Copy and verify** (the run's bank must not exist yet):
+   ```
+   cp -a ~/chess-artifacts/operations/rl-run1-volume.staging/bank ~/chess-artifacts/operations/rl-run1-volume
+   cd ~/chess-artifacts/operations/rl-run1-volume && sha256sum -c --quiet SHA256SUMS && echo BANK_OK
+   ```
+2. **Authorise.** The coordinator, never the operator script, writes one line, `<who> <ISO time> <message>`, to
+   `$V/OWNER_GO`.
+3. **Pre-flight** (verifies only, launches nothing; exit 0 expected):
+   ```
+   ~/chess-artifacts/operations/rl-run1-volume/operator_volume.sh --no-launch
+   grep MemAvailable /proc/meminfo     # >= 90177536 kB (86 GiB) before the smoke and the training step
+   ```
+   Stop every other GPU job. Quiet the host: the training step needs MemAvailable ≥ 86 GiB, and the watchdog stops it
+   below 6 GiB.
+4. **Launch** (the one command):
+   ```
+   ~/chess-artifacts/operations/rl-run1-volume/operator_volume.sh
+   ```
+   It does the following:
+   - verifies its own sha256, the bank against `SHA256SUMS` and `OWNER_GO`;
+   - is a no-op (exit 0) if a launch holds the lock or the run already finished;
+   - measures the idle `memory.used` and runs the pinned operator gate;
+   - writes the release line `volume idle_mib=<MiB> <ISO time>` to `$V/GPU_RELEASED_BY_OPERATOR`. A line with the same
+     idle value is kept; otherwise the old file is kept as `.before_<UTC stamp>`, and an existing kept file refuses (3);
+   - starts `launch_volume.sh` under `setsid nohup` (with `VOLUME_TEST_MEMINFO` unset), appending to `$V/run.out`.
+
+   Running it again is safe.
+5. **Watch:** `$V/resume.log` (every run, skip and seat), `$V/run.out`, `$V/watchdog.history`, `$V/guard.log`.
+6. **Stop and resume:**
+   - to stop: `kill -TERM <launch pid>` (in `resume.log`). The launcher kills its tracked process groups and writes
+     `$V/exit` 143;
+   - to resume, rerun step 4. A finished step is skipped, train resumes from its newest snapshot and matches resume
+     per seat.
+
+   After a watchdog stop, quiet the host and move `$V/STOP` aside (never delete it), then rerun step 4. `move_aside.sh
+   <step>` is only for a failed or interrupted non-training, non-match step, and `--seat A|B` only for one PARTIAL
+   seat.
+7. **Holds** are the owner's: read the file and change nothing. They are `HOLD_HOST_RAM`, `HOLD_MEM`,
+   `HOLD_TRAIN_CHECK`, `HOLD_RECAL`, `HOLD_SCREEN`, `HOLD_WATCHDOG`, `HOLD_READBACK_<seat>` and `STOP_SCREEN` (a
+   registered damage stop: the reading is recorded in `verdicts.json`).
+8. **The end:**
+   - `$V/exit` reads `0 <time>`;
+   - `$V/summary.txt` gives the licensed claim, each match's reading, excess, SE and Elo, the contrast and the screen;
+   - `$V/verdicts.json` holds the decision record, including the bootstrap check and the base match or why it was not
+     run.
+
+   The verdict goes in this record in the same session, by the pre-committed rule.
+
+### Expected durations (measured rates; the GPU rates are generation 2's)
+
+| Step | Duration | Basis |
+|---|---:|---|
+| pool | ≈ 15 min (measured: build 140 s, read-back 683–788 s, plan + check) | the real build in staging, below |
+| smoke | ≈ 10 min | the kC load (540 s, `rss_kC.json`) + 3 updates |
+| train | ≈ 36 min | 540 s load + 5,151 × 0.3164 s |
+| fits + bounds + bake | ≈ 25 min | the record's ≈ 0.4 GPU-h |
+| `m_kC_vs_g1` | ≈ 2.9 h | 1.45 h per 6,400-game seat; the screen is read ≈ 1.55 h in (seat A + ≈ 7 % of seat B: generation 2's g2_vs_g1 completed its pair ids < 200 after 458 seat-B games) |
+| `m_k1_vs_g1` | ≈ 2.9 h | as above |
+| **unconditional total** | **≈ 7.5 h** | |
+| `m_kC_vs_base` (if improves) | + 2.9 h | |
+
+A screen stop ends the run ≈ 3.0 h after launch.
+
+### What is banked at each step (all under `$V`)
+
+| Step | Banked |
+|---|---|
+| every step | `<step>.inputs`, `.started`, `.exit`; `resume.log`, `exit`, `exit.history` |
+| pool | `pool_kC/` (sealed run dir, copied shards), `pool.log`, `pool_readback.log`, `plan.json`, `pool_check.json` |
+| smoke | `smoke_mem.json`, `smoke_mem.jsonl` (per-update peaks), `smoke_mem.log` |
+| train | `arm_kC/` (reference collect, `train/` with `model.pt`, `metrics.json`, `manifest.json`, `snapshots/step_{1478,2189,3675}/`), `train.log`, `train.opt.json`, `plan_arm.json`, `train.check.json` |
+| fits, bounds | `recal_{1478,2189,3675,final}.json`, `fits.log`, `recal_bounds.json` |
+| bake | `kC_baked.pt`, `kC_baked.pt.json`, `kC_baked.pt.verify.json`, `bake.log` |
+| matches | `arenas/<label>/` and `smoke/arenas/<label>/`: per-seat `.games.jsonl`, `.pgn`, `.log`, `.exit`, `results.jsonl`, `pool.json`, `pool.log`; `screen.json` (+ `STOP_SCREEN` on damage) |
+| verdicts | `verdicts.json`, `summary.txt` |
+
+### Deviations from the launcher brief (conservative readings)
+
+1. **The admission record the pool tool reads is a bank copy.** The copy is `prelaunch/admission_record.md`, not "a
+   main checkout's copy". It is byte-equal to the merged file on main (sha256 `cdb1ab63`, checked against
+   `origin/main` after #1523 merged), and the tool pins that sha256. With the copy, the bank is self-contained and
+   verified by `SHA256SUMS`.
+2. **The training command adds `--pause-marker $V/STOP`.** The brief's command does not have it. At the PIN the
+   marker blocks stage starts only. A training phase already running is stopped by SIGTERM (the watchdog does this, or
+   the operator).
+3. **The smoke runs inline in the launcher.** `prelaunch/run_smoke.sh` is staged for a standalone smoke. It refuses
+   while a launch holds the bank lock, so the launcher does not call it.
+4. **Two refusals inside `step()` are kept as defence in depth.** They are "done but inputs differ" and "open step
+   under other inputs". The prescan refuses the same conditions earlier, without writing a marker. The harness
+   asserts the prescan's refusal, because the exit marker is left unchanged.
+5. **The pool tool's staging suite was rerun after `ADMISSION_SHA256` was set,** reduced at the coordinator's
+   request:
+   - the control (24/24) and the two admission mutants (M17, M18) were rerun;
+   - the other 16 mutants were not rerun. They test code that did not change, and the 18/18 series of revision 2
+     stands.
+6. **The per-refusal mutant series was run in full,** although the coordinator's re-scope arrived while it was
+   running. It already covered the number-comparing gates.
+7. **The bare `./scripts/lint.sh` exits 1 in the PR worktree,** on 6 errors and 1 warning in files this PR does not
+   touch. The worktree uses the live venv. The errors are unresolved imports of `zstandard` and `msgspec`, which that
+   venv lacks, and one torch-stub argument type. Ruff passes. This PR changes Markdown only, and CI's lint is its gate.
