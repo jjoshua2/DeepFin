@@ -545,7 +545,24 @@ Phase B reads only what phase A banked (its run dirs and sealed manifests, `stag
 `stage2/cost_scan.json`, the dose files) and runs arms C and D from `kC_baked.pt` to the registered readings. Bank:
 `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/`, listed in
 `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/SHA256SUMS` [`60b9e7ba`], whose sha256 the launcher
-`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` [`72647431`] pins. Pin `b0541c15a` for
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` [`120d0db5`] pins.
+**Launcher change after the harness (2026-11-26).** The 13-of-13 harness pass below ran on `launch_phase_b.sh`
+`72647431`; after it, two lines were added and nothing else: a usage comment, and, right after the launch line in
+`resume.log` (past every refusal), `echo "$$" > $PB/phase_b.pid`, so the launcher records its own pid. Why: the
+launch form `setsid nohup bash … & echo $! > pid` records the wrapper's pid, which exits at once (the coordinator had
+to correct phase A's pid file by hand). **That 13-of-13 pass predates this change; the phase B harness must be rerun
+once on the final launcher, at the boundary the coordinator announces after phase A's cost step, and must pass before
+phase B launches.** The launcher is not listed in `SHA256SUMS` (it pins that file's sha256), so the operator checks
+it directly before launch: `sha256sum ~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh`
+must print `120d0db5d82cac32c4e514ccec47aa7547af20c3d74866a0b404573c21815244`; any other value means do not launch.
+Launch: `PB=~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb; setsid nohup bash $PB/launch_phase_b.sh >
+$PB/phase_b.log 2>&1 < /dev/null &` (no `echo $!`); the pid is in `$PB/phase_b.pid` once the refusals pass. Stop:
+`kill -TERM $(cat $PB/phase_b.pid)`, then check `ps` for leftover Stockfish groups. **Phase A**: this record never
+carried phase A's launch line; the instructions sent with it used the `& echo $!` form, and the live run's
+`stage2/phase_a.pid` was corrected by the coordinator to 3116424. `launch_phase_a.sh` is pinned by the live run and
+is unchanged; any phase A relaunch records the real pid with `setsid nohup bash -c 'echo $$ > "$1/phase_a.pid"; exec
+bash "$1/launch_phase_a.sh"' _ $S2 > $S2/phase_a.log 2>&1 < /dev/null &` (`exec` keeps the pid), where
+`S2=~/chess-artifacts/operations/rl-deep-fast/stage2`. Pin `b0541c15a` for
 every step (collect, pool, train, fits, bake, play). Launch needs phase A finished (every phase-A step exited 0,
 `cost.json` and `cost_scan.json` present), `stage2/PHASE_B_GO`, and a `stage2b` release line.
 
