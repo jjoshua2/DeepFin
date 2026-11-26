@@ -64,7 +64,7 @@ exact-once, second pass and 16,000.
     by the pin's parser (`--seed 2026112601 --games 27840`).
   - CPU only, one thread, niced, a MemAvailable watchdog at 12 GiB that never fired.
   - The load ran on a kC pool built in staging (`rl-run1-volume.staging/rss/pool_kC`, 150 shards, 2,767,035 rows).
-- **Result** (`rss/rss_kC.json` [`7655061d`], log `rss/rss_kC.log` [`aebd11e9`], script `rss/rss_load.py` [`a8ef886e`]):
+- **Result** (`~/chess-artifacts/operations/rl-run1-volume.staging/rss/rss_kC.json` [`7655061d`], log `~/chess-artifacts/operations/rl-run1-volume.staging/rss/rss_kC.log` [`aebd11e9`], script `~/chess-artifacts/operations/rl-run1-volume.staging/rss/rss_load.py` [`a8ef886e`]):
   - train rows 2,636,964, hold-out rows 130,071, planned updates 5,151;
   - **peak RSS (`ru_maxrss` = `VmHWM`) 60.46 GiB;**
   - **the loaded arrays total 72.14 GiB.** That is more than the peak RSS, because some preallocated pages are not
@@ -79,7 +79,8 @@ exact-once, second pass and 16,000.
 
 **Host-RAM guards during the run:**
 - **Launch-time floor: `MemAvailable` ≥ 86 GiB** (72.14 + 12 GiB margin + ≈ 2 GiB for the trainer process),
-  checked by the launcher immediately before the training step's `.started`.
+  checked by the launcher immediately before **the 3-update GPU smoke's** `.started` and again before the training
+  step's (the smoke loads the same window).
   - A miss writes `HOLD_HOST_RAM`. The operator quiets the host and retries.
   - kB is used only if a quiet host still fails the floor. The switch to kB is recorded, with its own measured load.
 - **No agent harness or test run may be active during the load phase.** The coordinator enforces this with the hold
@@ -90,8 +91,13 @@ exact-once, second pass and 16,000.
     snapshot. A killed phase resumes from there with the same plan.
   - So the launcher runs its own watchdog. Below 6 GiB MemAvailable it writes `STOP` (the pause marker, which blocks
     every later stage) and sends SIGTERM to the training process itself. The OOM killer never chooses.
-  - The phase then resumes from its newest snapshot (1,478 / 2,189 / 3,675 updates), losing at most one snapshot
-    interval, about 8 GPU-min.
+  - The phase then resumes **in place** from its newest snapshot (1,478 / 2,189 / 3,675 updates), losing at most
+    one snapshot interval, about 8 GPU-min. The interrupted `train/` directory is **never moved aside**: the pin's
+    `train_generation` always uses `<arm>/gen_0001/train`, and `resumable_snapshot` searches only that directory's
+    `snapshots/step_*`. Moving it would restart from update zero.
+  - Resume facts the statistics reviewer verified at the pin: the resume key hashes the batch plan; `snapshot.json`
+    is written last, so a step without it is redone; the 17 resume tests pass; a mutant on the sampler cursor is
+    killed.
   - A second watchdog stop is a HOLD for the owner.
 
 **Updates are the pin's own plan, never a hand formula.**
@@ -200,31 +206,37 @@ with these exceptions:
   (a weights-only `model.pt`), and training is unchanged by it.
 
 **Recalibration at every checkpoint and at the final.**
-- Each is fitted with `scripts/fit_value_recal.py` at the pin: the checkpoint's net, reference `gen1_baked.pt`,
-  `--collect-dir` = the pool, hold-out 0.05.
+- Each is fitted with `scripts/fit_value_recal.py` at the pin: `--net` = the checkpoint's `model.pt`, `--reference`
+  = `gen1_baked.pt`, **`--collect-dir rl-run1-volume/pool_kC/gen_0001/collect/`** (the sealed collection directory,
+  not the pool's run dir), **`--holdout-frac 0.05`**, `--device cuda`.
 - All fits are banked.
 - Only the final net is baked (`bake_recal.py`, then `verify`) and played.
 
-**Bounds that scale with the updates.** Revision 1's fixed bounds were generation 2's, and they are likely unmeetable
-at 3,675–5,151 updates.
-- The bounds come from the pilot's one-generation drift, (T1, b1) = (0.7036, −0.2271) after U1 = 1,412 updates.
-  Generation 2 reproduced it: T 0.6997, b −0.2467 after 1,478 updates.
-- For a net after U updates, with s = U / 1,412:
-  - ln T ∈ [2 s ln T1, −s ln T1] = [−0.703 s, +0.352 s];
-  - b ∈ [2 s b1, −s b1] = [−0.454 s, +0.227 s].
-- At s = 1 these are generation 2's bounds, unchanged.
+**Recal bounds: generation 2's fixed box plus a stability rule** (revision 2's scaled box is withdrawn: at kC it
+admitted T from 0.077 to 3.61, which tests nothing).
+- **R1, at every checkpoint and the final:** T ∈ [0.4951, 1.4212] and b ∈ [−0.4542, +0.2271], generation 2's box
+  unchanged.
+- **R2, stability:** |ln T_final − ln T_1478| ≤ 0.10 and |b_final − b_1478| ≤ 0.10.
 
-Derivation:
-- With a flat LR and no schedule, the drift per update does not grow with the update count.
-- So a linear envelope (twice the measured rate in the measured direction, or once the rate in the opposite
-  direction) bounds "more of the same training". A fit outside it means drift faster than twice linear, which is not
-  more of the same.
-- Generation 2's fit sits at about half its envelope (s = 1.05).
-- A linear projection to kC (s = 3.65) gives T ≈ 0.29 and b ≈ −0.86. That is inside the kC bounds,
-  T ∈ [0.077, 3.61] and b ∈ [−1.66, +0.83], but it would be an extreme calibration. That is why every checkpoint is
-  fitted.
+**Basis: the banked fits show the drift is set early, then flat.**
+- The truncated-S series (one run, value-anchor screen) is flat across a 4× range of updates:
 
-**A bound violation is a HOLD, never a dead gate.** If any checkpoint's or the final's fit falls outside its bound:
+| Updates | T | b | File |
+|---:|---:|---:|---|
+| 353 | 0.8531 | −0.1273 | `~/chess-artifacts/operations/rl-run1-value-anchor/offline/cells/recal_S_trunc_353.json` [`1e32adfa`] |
+| 635 | 0.8533 | −0.1300 | `~/chess-artifacts/operations/rl-run1-value-anchor/offline/cells/recal_S_trunc_635.json` [`0dd75c1d`] |
+| 988 | 0.8508 | −0.1383 | `~/chess-artifacts/operations/rl-run1-value-anchor/offline/cells/recal_S_trunc_988.json` [`ad556efb`] |
+| 1,412 | 0.853 | −0.120 | the pilot's banked S fit |
+
+- Zq: generation 1 (T 0.7036, b −0.2271, 1,412 updates) and generation 2 (T 0.6997, b −0.2467, 1,478 updates).
+- So under "more of the same training", the 1,478-update fit should already be close to the final, and both inside
+  generation 2's box.
+- **Caveat, stated:** the dose series is S, a different value target. Zq has two points, from two generations, not a
+  dose series. Whether Zq's drift is flat in updates up to 5,151 is exactly what R2 tests. The statistics reviewer
+  withdrew its "unmeetable at kC" finding on this basis.
+
+**A miss of R1 or R2 is a HOLD, never a dead gate.** If any checkpoint's or the final's fit misses R1, or the final
+misses R2:
 - the launcher writes `HOLD_RECAL`, with all fits banked, and stops before any match;
 - the operator reads the fits, and the owner decides whether the primary plays;
 - no threshold is changed in flight.
@@ -249,13 +261,27 @@ the match book `rl-run1-pilot/openings/eval.pgn`.
 - Fresh k1 (`gen2_baked.pt`) vs parent: the same seed, 12,800 games.
 - Primary vs SL base: seed **2026112612**, 12,800 games, **only if** the primary improves vs the parent.
 
-**Confidence intervals:** a cluster bootstrap by opening (both colours of a pair resampled together).
+**The estimator, exactly.**
+- **Decision statistic:** the registered normal interval of `scripts/arena_seat_balanced_pool.py` over opening keys.
+  Per opening key, d(o) = the seat-balanced per-game excess on the score scale; the estimate is d̄ = mean_o d(o) and
+  SE = sd_o(d) / √K over the K opening clusters. LB95 / UB95 = d̄ ∓ 1.96 SE on the score scale. Elo, through
+  Elo(x) = −400 log10(1 / (0.5 + x) − 1), is for reporting only.
+- **Contrast:** Δ̂ = d̄_P − d̄_1 on the score scale (primary minus fresh k1, both vs the parent), with
+  SE = √(SE_P² + SE_1²). It passes iff Δ̂ − 1.645·SE > 0, strictly.
+- **Bootstrap, only as a check:** B = 20,000 resamples, seed 2026112613, the opening key as the unit, arms resampled
+  independently. It never decides.
+- **Missing games:** an incomplete pair is dropped. An opening key enters an arm only with both seats complete. The
+  dropped counts are reported. `--on-max-plies` is as in generation 2 (its launcher's setting, unchanged).
+- **Resume:** each match resumes per seat as in generation 2 revision 4. A finished seat (exit 0, exactly n games,
+  unique (pair id, half), one header, one result row with the seed, both nets' sha256 and the pin) is never replayed;
+  only a missing seat plays, then readback and pooling run again. No match is ever moved aside and rerun.
 
 **No pairing claim is made.** The review measured an opening-level correlation of 0.026 between arms, so sharing the
 seed buys nothing. The shared seed is kept only so that both arms play the same book draw.
 
 **Screen (primary vs parent only):**
-- the first 800 games (400 pairs);
+- defined by pair id, never by finishing order: the pairs with `pair_id` < 200 in each seat (400 pairs, 800 games in
+  all), inside the 12,800-game schedule. The screen is read only when all of them are complete in both seats;
 - the cell stops iff the screen's UB95 < 0 (damage). Otherwise the same match continues to 12,800, and the screen's
   games are counted once;
 - it is one look with a damage-only exit;
@@ -266,9 +292,9 @@ seed buys nothing. The shared seed is kept only so that both arms play the same 
 - Power: SE ≈ 2.29 Elo, so the 80%-power minimum detectable effect is ≈ 6.3–6.4 Elo.
 
 **Pre-registered slope contrast, one-sided.**
-- Δ = (primary vs parent) − (fresh k1 vs parent), from the two 12,800-game matches.
-- The arms are independent (no pairing assumed), so SE(Δ) ≈ 3.24.
-- **"Volume raised the step" iff Δ − 1.645 SE(Δ) > 0.** MDE80 ≈ 8.1 Elo.
+- Δ̂ = d̄_P − d̄_1 (above), from the two 12,800-game matches.
+- The arms are independent (no pairing assumed), so SE(Δ̂) ≈ 3.24 Elo-equivalent.
+- **"Volume raised the step" iff Δ̂ − 1.645·SE > 0, strictly.** MDE80 ≈ 8.1 Elo.
 - The banked generation-2 reading (+1.14) motivated this experiment, so it is **not reused** in the contrast
   (regression to the mean). The fresh k1 match replaces it.
 
@@ -282,10 +308,12 @@ seed buys nothing. The shared seed is kept only so that both arms play the same 
 **Conditional control (runs only after an "improves"): 1× rows, extra updates.** It separates rows from updates.
 - Design: the gen2 rows alone, each presented twice (the owner's two-view ceiling, mirrors counted), giving
   2 × 1,478 = 2,956 updates.
-- It plays 12,800 games vs the parent on seed 2026112611 and is read by the same rules.
-- If the control also improves, the step is not attributable to distinct rows.
-- If it does not improve while the primary did, that supports distinct rows. Caveat: the update counts still differ
-  (2,956 vs 5,151 or 3,675), because the ceiling forbids more passes.
+- It plays 12,800 games vs the parent on seed 2026112611, under the same estimator.
+- **Attribution needs a direct contrast, registered now:** Δ̂_PC = d̄_P − d̄_C (primary minus control, both vs the
+  parent), SE = √(SE_P² + SE_C²). **"Distinct rows beat repeated rows" iff Δ̂_PC − 1.645·SE > 0, strictly.**
+  Otherwise attribution is unread. A split of significance (primary improves, control does not) is not a difference
+  and licenses nothing about attribution.
+- Caveat: the update counts still differ (2,956 vs 5,151), because the ceiling forbids more passes.
 - The pin has no exactly-twice-per-row mode for one collection (`--presentations` counts generations). The mechanism
   is specified and tested in the addendum that registers the control.
 
@@ -333,7 +361,8 @@ rest of the primary match, then the k1 match.
 - the sources are re-hashed by P1 at build, and by the pin's lineage check at every stage;
 - fresh_indep's `procs/01/` hard links are never opened (the admission record's hazard); the pool copies only
   `shards/`;
-- a failed stage is moved aside by name and rerun from its inputs;
+- a failed non-training, non-match stage is moved aside by name and rerun from its inputs. An interrupted training
+  phase resumes in place from its snapshot. A match resumes per seat. Neither is moved aside;
 - HOLD files stop the run before the next GPU step;
 - no live config, training run or bank is touched.
 
