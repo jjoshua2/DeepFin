@@ -420,43 +420,31 @@ def test_an_arm_must_match_the_source_k() -> None:
 
 def test_vram_refusal_uses_free_memory_and_the_usable_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     gib = 2**30
-    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (10 * gib, 32 * gib, "nvidia-smi"))
+    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (5 * gib, 32 * gib, "nvidia-smi"))
     settings = replace(_settings(3, games=512), concurrency=128, sims=64, device="cuda")
     with pytest.raises(ValueError, match=r"--collect-procs 3 x --concurrency 128 .* pass --collect-procs 1 explicitly"):
         collect_mod.check_vram(settings)
     monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (31 * gib, 32 * gib, "torch"))
-    record = collect_mod.check_vram(settings)  # measured 22.1 GB: fits
+    record = collect_mod.check_vram(settings)  # Stage 3's driver shape: fits
     assert record is not None
     assert record["usable_gib"] == pytest.approx(0.83 * 32)
     assert record["source"] == "torch"  # the instrument that read the memory is on the record
-    # every fitted point forwarded its whole leaf buffer; a chunked shape is an extrapolation
-    assert record["extrapolated"] is (collect_mod.realised_eval_max_batch(settings) > 512)
-    unchunked = replace(settings, concurrency=32, games=32)  # 1,024 leaf rows: forwarded whole at N = 1024
-    assert collect_mod.realised_eval_max_batch(unchunked) == 1024
-    small = collect_mod.check_vram(replace(unchunked, eval_chunk_rows=1024))
-    assert small is not None
-    assert small["extrapolated"] is False
-    wide = collect_mod.check_vram(replace(settings, concurrency=128, games=384, sims=64))
-    assert wide is not None
-    assert wide["extrapolated"] is True
+    assert record["extrapolated"] is False  # 3 x 128 at 64 sims, 512-row forwards: a measured point
+    assert record["extrapolated_because"] == []
     # 16 sims: the default 8 x 64 (measured 22.9 GB) fits; 8 x 96 (31.0 GB, ran
     # 22% slower) is past the usable limit although the card has 31 GiB free.
-    assert collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=64, sims=16)) is not None
+    eight = collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=64, sims=16))
+    assert eight is not None
+    assert eight["extrapolated"] is True
     with pytest.raises(ValueError, match="usable limit"):
         collect_mod.check_vram(replace(settings, collect_procs=8, concurrency=96, sims=16))
-    # One process at 64 sims: 1 x 256 (measured 12.1 GB) fits; 1 x 512 peaked at
-    # 29.9 GB with 16,384-row forwards, past the usable limit, which the linear
-    # segment alone under-predicted. Forwards that large are no longer allowed
-    # (--eval-chunk-rows <= 2048); at the default (512-row forwards) the steep
-    # segment is not charged.
     one = replace(settings, collect_procs=1)
     assert collect_mod.check_vram(replace(one, concurrency=256)) is not None
     with pytest.raises(ValueError, match="--eval-chunk-rows must be between 1 and 2048"):
         collect_mod.check_vram(replace(one, concurrency=512, eval_chunk_rows=16384))
-    assert collect_mod.check_vram(replace(one, concurrency=512)) is not None
     # A shape no process count fits is not told to use --collect-procs 1.
-    with pytest.raises(ValueError, match="no process count fits at --concurrency 1024: lower") as err:
-        collect_mod.check_vram(replace(one, concurrency=1024, games=2048))
+    with pytest.raises(ValueError, match="no process count fits at --concurrency 4096: lower") as err:
+        collect_mod.check_vram(replace(one, concurrency=4096, games=8192))
     assert "pass --collect-procs" not in str(err.value)
 
 
@@ -598,24 +586,92 @@ def test_an_arm_of_a_source_without_run_config_takes_the_collect_manifest_shape(
     assert simple_rl_loop.resolve_collect_shape(a) == (1, 64)  # predates both keys
 
 
-def test_vram_charges_boards_and_the_largest_forward_not_the_leaf_reservation() -> None:
-    """A wider topk reserves a larger leaf buffer that no forward reaches once
-    forwards are chunked: the full-width arm's topk 32 / 64 at 3 x 128 is charged
-    like topk 16, and the measured unchunked shapes keep their charge."""
-    base = replace(_settings(3, games=384), concurrency=128, sims=64, device="cuda")
-    need16 = collect_mod.vram_need_gib(base)
-    assert need16 == pytest.approx(1.1 * (48 * 64 + 1.11 * 32 * 128) * 3 / 1024)  # every fitted point unchanged
-    # NOT a claim that these charges are right: they equal topk 16's because forwards are
-    # chunked. topk 21 at 41 sims (20.99 GiB here) went over the card unchunked
-    # (mem_wide2_20261122) and is on the refit PR's must-refuse-unchunked list.
-    for topk in (21, 32, 64):
-        assert collect_mod.vram_need_gib(replace(base, topk=topk)) == pytest.approx(need16)
-    # The check vouches for forwards up to 2,048 rows (measured 6,476 MiB per process at
-    # 2,048-row eager forwards, inside the line). Larger bounds are refused outright,
-    # not charged: 4,096 rows measured 9,061 MiB per process (outside the line) and a
-    # 5,300-row forward went over the card, while the steep term still passed both.
-    wide = replace(base, topk=32)
-    assert collect_mod.vram_need_gib(replace(wide, eval_chunk_rows=2048)) == pytest.approx(need16)
+# Measured per-process peaks at the chunked fit shape (3 x 128 games, 64 sims; (peak - idle) / 3 from the
+# operator's sampler): (topk, root full width, N) -> MiB. Banks chunk_meas_20261122 (N = 512, head 1e3a537f6)
+# and chunk_meas2_20261122 (head 4943adea2).
+_CHUNKED_PEAKS = {
+    (16, False, 512): 2622, (16, True, 512): 2560, (32, True, 512): 2684,
+    (32, True, 1024): 4291, (16, False, 1024): 3867,
+    (32, True, 2048): 5838, (16, False, 2048): 6474,
+}
+
+
+def _fit_shape(topk: int, n: int, full_width: bool = False) -> CollectSettings:
+    return replace(_settings(3, games=384), concurrency=128, sims=64, device="cuda", topk=topk, eval_chunk_rows=n,
+                   root_full_width=full_width)
+
+
+def test_vram_charge_covers_every_measured_chunked_peak_within_23_percent() -> None:
+    """Predicted (x 1.10 safety) / measured is in [1.00, 1.23] at every measured chunked point, and the
+    record is not extrapolated there: the refit is no longer ~3.2x conservative (8,381 MiB at N = 512)."""
+    for (topk, full_width, n), measured in _CHUNKED_PEAKS.items():
+        need, why = collect_mod.vram_charge(_fit_shape(topk, n, full_width))
+        per = need / 3 * 1024
+        assert measured <= per <= 1.23 * measured, (topk, n, per, measured)
+        assert why == [], why
+    # each RAW knot (before the x 1.10 safety factor) is at least the largest arm measured at its N, so the
+    # safety factor never absorbs a knot set below a measurement
+    for n in (512, 1024, 2048):
+        top = max(m for (_t, _f, nn), m in _CHUNKED_PEAKS.items() if nn == n)
+        assert collect_mod.vram_detail(64, 128, n, 4096)["knot_mib"] >= top, n
+    # the charge follows the forward rows, not the topk's reservation (8,192 rows at topk 32 is measured)
+    assert collect_mod.vram_need_gib(_fit_shape(32, 512)) == pytest.approx(collect_mod.vram_need_gib(_fit_shape(16, 512)))
+
+
+def test_vram_marks_every_unmeasured_shape_extrapolated() -> None:
+    fit = _fit_shape(16, 512)
+    for other in (replace(fit, collect_procs=4),                   # 4 x 128: not measured yet
+                  replace(fit, concurrency=192, games=576),        # 3 x 192: not measured yet
+                  replace(fit, sims=16),
+                  replace(fit, eval_chunk_rows=768),               # between the measured chunk sizes
+                  replace(fit, topk=64),                           # a 16,384-row leaf reservation
+                  replace(fit, topk=24, root_full_width=True),     # an arm not measured (rows as measured)
+                  replace(fit, topk=32)):                          # topk 32 without full width: not measured
+        need, why = collect_mod.vram_charge(other)
+        assert why, other
+        assert need >= collect_mod.vram_need_gib(fit) * (other.collect_procs / 3) - 1e-9
+    # a reservation above the measured 8,192 rows is charged (0.02 MiB a row): topk 64 reserves 16,384
+    assert collect_mod.vram_need_gib(replace(fit, topk=64)) == pytest.approx(
+        collect_mod.vram_need_gib(fit) + 1.10 * 0.02 * (16384 - 8192) * 3 / 1024)
+
+
+def test_the_memory_record_carries_every_term_of_the_charge(monkeypatch: pytest.MonkeyPatch) -> None:
+    gib = 2**30
+    monkeypatch.setattr(collect_mod, "_gpu_memory", lambda *_a: (31 * gib, 32 * gib, "torch"))
+    rec = collect_mod.check_vram(_fit_shape(32, 1024, True))
+    assert rec is not None
+    assert (rec["knot_mib"], rec["line_ratio"], rec["forward_rows"], rec["leaf_rows"], rec["reserved_row_mib"]) == (
+        pytest.approx(4291), pytest.approx(1.0), 1024, 8192, pytest.approx(0.0))
+    assert rec["per_proc_mib"] == pytest.approx(4291)
+    assert rec["need_gib"] == pytest.approx(rec["safety"] * rec["per_proc_mib"] * 3 / 1024)
+    assert rec["line_floor_applied"] is False
+    low = collect_mod.check_vram(replace(_fit_shape(16, 512), sims=16, collect_procs=8, concurrency=64))
+    assert low is not None
+    assert low["line_floor_applied"] is True
+    assert low["per_proc_mib"] == pytest.approx(low["line_mib"])
+
+
+def test_vram_model_refuses_the_shapes_that_went_over_the_card() -> None:
+    """Model level (the forward rows these shapes ran are no longer configurable): each predicts more than
+    the 5090's usable 26.43 GiB at its own K."""
+    usable = 0.83 * 31.84
+
+    def need(sims: int, boards: int, rows: int, leaf: int, k: int) -> float:
+        return 1.10 * collect_mod.vram_per_proc_mib(sims, boards, rows, leaf)[0] * k / 1024
+    assert need(64, 128, 16384, 16384, 1) > usable   # one process, 16,384-row eager forwards (28,515 MiB measured)
+    assert need(41, 128, 5376, 5376, 3) > usable     # topk 21 at 41 sims, 3 x 128, 5,376-row forwards: aborted
+    assert need(64, 128, 5300, 8192, 3) > usable     # topk 32 at 64 sims, 3 x 128, 5,300-row forwards: aborted
+    # the unchunked eager points are the knots beyond 2,048 rows, charged as measured (fit shape, before x 1.10)
+    assert collect_mod.vram_per_proc_mib(64, 128, 4096, 4096)[0] == pytest.approx(9061)
+    assert collect_mod.vram_per_proc_mib(64, 128, 16384, 8192)[0] == pytest.approx(28515)
+    assert need(16, 96, 512, 3072, 8) > usable       # 8 x 96 at 16 sims (31.0 GB, 22% slower)
+    assert need(16, 64, 512, 2048, 8) <= usable      # 8 x 64 at 16 sims (22.9 GB): the 16-sim default
+    for rows in (512, 1024, 2048):
+        assert need(64, 128, rows, 8192, 3) <= usable  # Stage 3's driver shape at every measured N
+
+
+def test_eval_chunk_rows_above_the_measured_points_is_refused() -> None:
+    wide = _fit_shape(32, 2048)
     for n in (2049, 4096, 5300, 8192):
         with pytest.raises(ValueError, match="--eval-chunk-rows must be between 1 and 2048"):
             collect_mod.vram_need_gib(replace(wide, eval_chunk_rows=n))
