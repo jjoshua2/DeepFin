@@ -602,23 +602,29 @@ scripts/verify_evidence_stamps.py --quiet docs/experiments/2026-11-21-rl-run1-ro
 
 | File | Current version | Previous versions (each kept as `.vN`) |
 |---|---|---|
-| `RFW/gpu_guard.sh` [`4324d33990f6`] | v7 | `RFW/gpu_guard.sh.v6` [`c8697d517544`], `RFW/gpu_guard.sh.v5` [`30d2226f6a78`], `RFW/gpu_guard.sh.v4` [`b3ffd88cf5f7`], `RFW/gpu_guard.sh.v3` [`ee073f841a24`], `RFW/gpu_guard.sh.v2` [`997969c87bf3`], `RFW/gpu_guard.sh.v1` [`a0a2f869a719`] |
-| `RFW/launch_lib.sh` [`bbdcdb37ed6e`] | v4 | `RFW/launch_lib.sh.v3` [`b9723e9355cc`], `RFW/launch_lib.sh.v2` [`218d215dd305`], `RFW/launch_lib.sh.v1` [`9bae510f71b0`] |
+| `RFW/gpu_guard.sh` [`a65fccd310ca`] | v8 | `RFW/gpu_guard.sh.v7` [`4324d33990f6`], `RFW/gpu_guard.sh.v6` [`c8697d517544`], `RFW/gpu_guard.sh.v5` [`30d2226f6a78`], `RFW/gpu_guard.sh.v4` [`b3ffd88cf5f7`], `RFW/gpu_guard.sh.v3` [`ee073f841a24`], `RFW/gpu_guard.sh.v2` [`997969c87bf3`], `RFW/gpu_guard.sh.v1` [`a0a2f869a719`] |
+| `RFW/launch_lib.sh` [`12e1a1c18eb3`] | v5 | `RFW/launch_lib.sh.v4` [`bbdcdb37ed6e`], `RFW/launch_lib.sh.v3` [`b9723e9355cc`], `RFW/launch_lib.sh.v2` [`218d215dd305`], `RFW/launch_lib.sh.v1` [`9bae510f71b0`] |
 | `RFW/seat_state.py` [`15022d1b3aa5`] | v3 | `RFW/seat_state.py.v2` [`730a1c958edf`], `RFW/seat_state.py.v1` [`1577deaa9a97`] |
 | `RFW/clear_step.sh` [`e6a3f324e61e`] | v4 | `RFW/clear_step.sh.v3` [`e2df58427ed4`], `RFW/clear_step.sh.v2` [`dd07013a9641`], `RFW/clear_step.sh.v1` [`4ace011c377f`] |
 | `RFW/verify_outputs.py` [`50ca4fa4b77c`] | v1 | — |
-| `RFW/stage0/run_stage0.sh` [`7d4ff2022a2d`] | v8 | `RFW/stage0/run_stage0.sh.v7` [`4f851a9c9c4f`], `RFW/stage0/run_stage0.sh.v6` [`8aafea169066`], `RFW/stage0/run_stage0.sh.v5` [`eb1dd4d3163b`], `RFW/stage0/run_stage0.sh.v4` [`205bd4f0db30`], `RFW/stage0/run_stage0.sh.v3` [`d0e3bcb6952b`], `RFW/stage0/run_stage0.sh.v2` [`39303c3d7620`], `RFW/stage0/run_stage0.sh.v1` [`a84f4c7cfa63`] |
+| `RFW/stage0/run_stage0.sh` [`69faf7ac40a6`] | v9 | `RFW/stage0/run_stage0.sh.v8` [`7d4ff2022a2d`], `RFW/stage0/run_stage0.sh.v7` [`4f851a9c9c4f`], `RFW/stage0/run_stage0.sh.v6` [`8aafea169066`], `RFW/stage0/run_stage0.sh.v5` [`eb1dd4d3163b`], `RFW/stage0/run_stage0.sh.v4` [`205bd4f0db30`], `RFW/stage0/run_stage0.sh.v3` [`d0e3bcb6952b`], `RFW/stage0/run_stage0.sh.v2` [`39303c3d7620`], `RFW/stage0/run_stage0.sh.v1` [`a84f4c7cfa63`] |
 | `RFW/stage0/run_stage0_all.sh` [`89a04df9ae8f`] | v6 | `RFW/stage0/run_stage0_all.sh.v5` [`5163ea29e2cb`], `RFW/stage0/run_stage0_all.sh.v4` [`09c9eea07472`], `RFW/stage0/run_stage0_all.sh.v3` [`0d9a81de48f5`], `RFW/stage0/run_stage0_all.sh.v2` [`98a9bea18970`], `RFW/stage0/run_stage0_all.sh.v1` [`51482410ec7c`] |
-| `RFW/stage0/stage0_decide.py` [`d2ae12874881`] | v6 | `RFW/stage0/stage0_decide.py.v5` [`cf5e1cbb397f`], `RFW/stage0/stage0_decide.py.v4` [`f61952c2b32a`], `RFW/stage0/stage0_decide.py.v3` [`4771354e2117`], `RFW/stage0/stage0_decide.py.v2` [`4c02fc7565dd`], `RFW/stage0/stage0_decide.py.v1` [`fb099bed9a35`] |
-| `RFW/stage0/fab_test/run_fab.py` [`5360bc2ceb99`] | v3 | `RFW/stage0/fab_test/run_fab.py.v2` [`3abfd33405ac`], `RFW/stage0/fab_test/run_fab.py.v1` [`93e32555a306`] |
-| `RFW/stage1/run_stage1.sh` [`b419265e881d`] | v5 | `RFW/stage1/run_stage1.sh.v4` [`b9ab2fae46ed`], `RFW/stage1/run_stage1.sh.v3` [`0539b8e1e4f4`], `RFW/stage1/run_stage1.sh.v2` [`3778d06ddad6`], `RFW/stage1/run_stage1.sh.v1` [`d83c8601b3a4`] |
-| `RFW/run_rfw_match.sh` [`29aedb0040c9`] | v6 | `RFW/run_rfw_match.sh.v5` [`e8e85a601c32`], `RFW/run_rfw_match.sh.v4` [`91ef5a8f87ed`], `RFW/run_rfw_match.sh.v3` [`b24a435b24e5`], `RFW/run_rfw_match.sh.v2` [`0487d857e379`], `RFW/run_rfw_match.sh.v1` [`0c192e052082`] |
-| `RFW/stage2/run_stage2.sh` [`49c17f057987`] | v8 | `RFW/stage2/run_stage2.sh.v7` [`a9d05768c5c9`], `RFW/stage2/run_stage2.sh.v6` [`d6839c0ca884`], `RFW/stage2/run_stage2.sh.v5` [`e831f6274f47`], `RFW/stage2/run_stage2.sh.v4` [`174495f8c6eb`], `RFW/stage2/run_stage2.sh.v3` [`ba70d73eb7b7`], `RFW/stage2/run_stage2.sh.v2` [`c07fe428aa39`], `RFW/stage2/run_stage2.sh.v1` [`5ba517c5ae0e`] |
-| `RFW/stage3/launch_stage3.sh` [`f154bdbe7bda`] | v8 | `RFW/stage3/launch_stage3.sh.v7` [`2880311d902c`], `RFW/stage3/launch_stage3.sh.v6` [`86494309a5f5`], `RFW/stage3/launch_stage3.sh.v5` [`b4a0cf0e46f8`], `RFW/stage3/launch_stage3.sh.v4` [`f5ea61297307`], `RFW/stage3/launch_stage3.sh.v3` [`8bfe478f0db8`], `RFW/stage3/launch_stage3.sh.v2` [`a519b39f2200`], `RFW/stage3/launch_stage3.sh.v1` [`95c8a66dbc59`] |
-| `RFW/gpu_scan.sh` [`8b4261b0a653`] | v5 | `RFW/gpu_scan.sh.v4` [`949408e727e7`], `RFW/gpu_scan.sh.v3` [`23a504a858bc`], `RFW/gpu_scan.sh.v2` [`38c6db9bbf69`], `RFW/gpu_scan.sh.v1` [`ec611f4b3a5d`] |
-| `RFW/guard_test/guard_test.sh` [`83a3b679efe0`] | v11 | `RFW/guard_test/guard_test.sh.v10` [`78d1b3f40d22`], `RFW/guard_test/guard_test.sh.v9` [`167b79eeee93`], `RFW/guard_test/guard_test.sh.v8` [`c835c5280f1c`], `RFW/guard_test/guard_test.sh.v7` [`ac4196580a48`], `RFW/guard_test/guard_test.sh.v6` [`275c91d526df`], `RFW/guard_test/guard_test.sh.v5` [`d9b84ec2eba5`], `RFW/guard_test/guard_test.sh.v4` [`d4ad57efc6f3`], `RFW/guard_test/guard_test.sh.v3` [`b40b08d3d30c`], `RFW/guard_test/guard_test.sh.v2` [`730d515388e3`], `RFW/guard_test/guard_test.sh.v1` [`621a57547b22`] |
+| `RFW/stage0/stage0_decide.py` [`ff08b661fa46`] | v7 | `RFW/stage0/stage0_decide.py.v6` [`d2ae12874881`], `RFW/stage0/stage0_decide.py.v5` [`cf5e1cbb397f`], `RFW/stage0/stage0_decide.py.v4` [`f61952c2b32a`], `RFW/stage0/stage0_decide.py.v3` [`4771354e2117`], `RFW/stage0/stage0_decide.py.v2` [`4c02fc7565dd`], `RFW/stage0/stage0_decide.py.v1` [`fb099bed9a35`] |
+| `RFW/stage0/fab_test/run_fab.py` [`8068235ca3d1`] | v4 | `RFW/stage0/fab_test/run_fab.py.v3` [`5360bc2ceb99`], `RFW/stage0/fab_test/run_fab.py.v2` [`3abfd33405ac`], `RFW/stage0/fab_test/run_fab.py.v1` [`93e32555a306`] |
+| `RFW/stage1/run_stage1.sh` [`61c66b9da915`] | v6 | `RFW/stage1/run_stage1.sh.v5` [`b419265e881d`], `RFW/stage1/run_stage1.sh.v4` [`b9ab2fae46ed`], `RFW/stage1/run_stage1.sh.v3` [`0539b8e1e4f4`], `RFW/stage1/run_stage1.sh.v2` [`3778d06ddad6`], `RFW/stage1/run_stage1.sh.v1` [`d83c8601b3a4`] |
+| `RFW/run_rfw_match.sh` [`73340cd07d91`] | v7 | `RFW/run_rfw_match.sh.v6` [`29aedb0040c9`], `RFW/run_rfw_match.sh.v5` [`e8e85a601c32`], `RFW/run_rfw_match.sh.v4` [`91ef5a8f87ed`], `RFW/run_rfw_match.sh.v3` [`b24a435b24e5`], `RFW/run_rfw_match.sh.v2` [`0487d857e379`], `RFW/run_rfw_match.sh.v1` [`0c192e052082`] |
+| `RFW/stage2/run_stage2.sh` [`e38254f18e38`] | v9 | `RFW/stage2/run_stage2.sh.v8` [`49c17f057987`], `RFW/stage2/run_stage2.sh.v7` [`a9d05768c5c9`], `RFW/stage2/run_stage2.sh.v6` [`d6839c0ca884`], `RFW/stage2/run_stage2.sh.v5` [`e831f6274f47`], `RFW/stage2/run_stage2.sh.v4` [`174495f8c6eb`], `RFW/stage2/run_stage2.sh.v3` [`ba70d73eb7b7`], `RFW/stage2/run_stage2.sh.v2` [`c07fe428aa39`], `RFW/stage2/run_stage2.sh.v1` [`5ba517c5ae0e`] |
+| `RFW/stage3/launch_stage3.sh` [`4efa17765d61`] | v9 | `RFW/stage3/launch_stage3.sh.v8` [`f154bdbe7bda`], `RFW/stage3/launch_stage3.sh.v7` [`2880311d902c`], `RFW/stage3/launch_stage3.sh.v6` [`86494309a5f5`], `RFW/stage3/launch_stage3.sh.v5` [`b4a0cf0e46f8`], `RFW/stage3/launch_stage3.sh.v4` [`f5ea61297307`], `RFW/stage3/launch_stage3.sh.v3` [`8bfe478f0db8`], `RFW/stage3/launch_stage3.sh.v2` [`a519b39f2200`], `RFW/stage3/launch_stage3.sh.v1` [`95c8a66dbc59`] |
+| `RFW/gpu_scan.sh` [`b8197e6e9ca6`] | v6 | `RFW/gpu_scan.sh.v5` [`8b4261b0a653`], `RFW/gpu_scan.sh.v4` [`949408e727e7`], `RFW/gpu_scan.sh.v3` [`23a504a858bc`], `RFW/gpu_scan.sh.v2` [`38c6db9bbf69`], `RFW/gpu_scan.sh.v1` [`ec611f4b3a5d`] |
+| `RFW/check_shape.py` [`b615f28e9cab`] | v2 | `RFW/check_shape.py.v1` [`95ee428f58f9`] |
+| `RFW/stage1/stage1_search.py` [`63a06c5e250c`] | v2 | `RFW/stage1/stage1_search.py.v1` [`b928707dee79`] |
+| `RFW/guard_test/guard_test.sh` [`f2f3fdd85b1d`] | v15 | `RFW/guard_test/guard_test.sh.v14` [`9bceb5be1c9b`], `RFW/guard_test/guard_test.sh.v13` [`cb01663fa9f9`], `RFW/guard_test/guard_test.sh.v12` [`fe6ecc0ee08b`], `RFW/guard_test/guard_test.sh.v11` [`83a3b679efe0`], `RFW/guard_test/guard_test.sh.v10` [`78d1b3f40d22`], `RFW/guard_test/guard_test.sh.v9` [`167b79eeee93`], `RFW/guard_test/guard_test.sh.v8` [`c835c5280f1c`], `RFW/guard_test/guard_test.sh.v7` [`ac4196580a48`], `RFW/guard_test/guard_test.sh.v6` [`275c91d526df`], `RFW/guard_test/guard_test.sh.v5` [`d9b84ec2eba5`], `RFW/guard_test/guard_test.sh.v4` [`d4ad57efc6f3`], `RFW/guard_test/guard_test.sh.v3` [`b40b08d3d30c`], `RFW/guard_test/guard_test.sh.v2` [`730d515388e3`], `RFW/guard_test/guard_test.sh.v1` [`621a57547b22`] |
 | `RFW/guard_test/run_mutants_v11.py` [`d3136aea234f`] | v1 | — |
-| `RFW/SHA256SUMS` [`1bd3bec3f25f`] | v5 | `RFW/SHA256SUMS.v4` [`5ebf76b14621`], `RFW/SHA256SUMS.v3` [`5905c14b95f4`], `RFW/SHA256SUMS.v2` [`5816a4677421`], `RFW/SHA256SUMS.v1` [`ac86aa6cbfe9`] |
+| `RFW/guard_test/run_mutants_v12.py` [`d1bcefa298f3`] | v4 | `RFW/guard_test/run_mutants_v12.py.v3` [`39cf955c554b`], `RFW/guard_test/run_mutants_v12.py.v2` [`73689fcd2730`], `RFW/guard_test/run_mutants_v12.py.v1` [`3dc18b9b659b`] |
+| `RFW/addendum2/repin.py` [`7f9aa9f66f98`] | v2 | `RFW/addendum2/repin.py.v1` [`32fb348028cc`] |
+| `RFW/addendum2/operator_repin.sh` [`78670913dedc`] | v3 | `RFW/addendum2/operator_repin.sh.v2` [`10c04aef0ba3`], `RFW/addendum2/operator_repin.sh.v1` [`f7f81f66df2d`] |
+| `RFW/addendum2/bank_swap.sh` [`1069ede7ab74`] | v1 | — |
+| `RFW/SHA256SUMS` [`3b328898d389`] | v6 | `RFW/SHA256SUMS.v5` [`1bd3bec3f25f`], `RFW/SHA256SUMS.v4` [`5ebf76b14621`], `RFW/SHA256SUMS.v3` [`5905c14b95f4`], `RFW/SHA256SUMS.v2` [`5816a4677421`], `RFW/SHA256SUMS.v1` [`ac86aa6cbfe9`] |
 
 **Addendum changes beyond the guard (2026-11-22):**
 - **Stage-0 series files.** `clear_step.sh stage0-block` now moves `decision.series.json` and
@@ -1533,7 +1539,27 @@ does not apply exactly once, keeps every changed file as `.vN`, and moves `HOLD_
   The second pass then had 1 WRONG: those three cases' clears left aborted dirs that a later `clear_step` case
   counts; v15 removes them (fake bank only). `repin.py` is unchanged: it is the record of what was applied.
   Outputs: `guard_test/guard_test.addendum2.v14_4wrong.txt`, `…v15a_1wrong.txt`.
-- **The series:** {SERIES_RESULT}
+- **The series:** **not exhaustive at the re-pin: stopped by owner decision.** Everything below ran on
+  the re-pinned staging bank (`guard_test.sh` v15, `gpu_scan.sh` v6, runner v12.1, `--jobs 4`).
+  - Unmutated pass: `TOTAL PASS=213 WRONG=0`, harness rc 0 (`guard_test/guard_test.addendum2.txt`).
+  - Apply-only: 121 of 121 apply exactly once and parse (above).
+  - Full-mode control (`guard_mutants_v12_control_full2.txt`): `MUTANTS RAN=8 EXPECTED=8 NOT_OK=0`, wall 2,106 s.
+    M0 survived 213 / 213. M50, G9, G19, M57, G26, M66 and M70 were each CAUGHT by the same named case as in the
+    early-exit control (case numbers shift by one after case 55, for the case v13 added). Together with the 4 full-mode
+    runs before the hold (pre-re-pin, 200 cases), all 11 control runs agree with the early-exit run on verdict and
+    catching case.
+  - Early-exit series (`guard_mutants_v12_series_final.txt`, about 68 min): M0 survived 213 / 213. Then M1, M2,
+    M3, M4, M6, M7, M8, M10 to M27 (25 mutants) were all CAUGHT, with first catches at cases 5 to 198, 4 to 763 s
+    each. The owner stopped the series there: it was not worth the idle GPU. The runner's process group was sent
+    SIGTERM, and a /proc scan afterwards found no tagged process and none with a cwd in a bank copy. A planned second leg at
+    `--jobs 8` was cancelled before it started.
+  - **So 32 of the 120 mutants are caught at the re-pin**: the 25 above plus the 7 control mutants. The other 88
+    were never run at the re-pin: M28–M49, M51–M56, M58–M65, M67–M69, M71–M88, G1–G8, G10–G18, G20–G25 and
+    G27–G34. They were checked by apply-only alone. For their guards the evidence is the unmutated pass at the
+    re-pin (213 / 213) and the full v11 series on the pre-re-pin harness (G1–G33 and M1–M68, all caught; see
+    "Mutants v11"). It is not a fresh series. M69 and M71–M88 (from the #1509 review, the re-pin and the wide arm)
+    and G34 have no series verdict at all, only apply-only. G34 was also checked by hand, as described under v6
+    above.
 
 ### Realised-field gates on every run
 
