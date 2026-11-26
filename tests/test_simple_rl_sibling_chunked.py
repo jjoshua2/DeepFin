@@ -63,6 +63,7 @@ class ReferenceTerm(sib.SiblingTerm):
         self.steps += 1
         if not ids.size:
             self.per_step.append([0, 0.0])
+            self.per_step_detail.append([0, 0])
             return None
         weighted, resid = self._pair_loss(*self._tensors(ids))
         loss = weighted.mean()
@@ -71,6 +72,7 @@ class ReferenceTerm(sib.SiblingTerm):
         self.loss_sum += float(weighted.detach().sum())
         self.abs_resid_sum += float(resid.detach().abs().sum())
         self.per_step.append([int(ids.size), float(loss.detach())])
+        self.per_step_detail.append([int((weighted.detach() > 0).sum()), 2 * int(ids.size)])
         return self.w * loss
 
 
@@ -139,6 +141,9 @@ def _assert_equal_runs(got: dict[str, Any], ref: dict[str, Any], *, rtol: float 
     assert [r[0] for r in got["summary"]["per_step"]] == [r[0] for r in ref["summary"]["per_step"]]
     np.testing.assert_allclose([r[1] for r in got["summary"]["per_step"]],
                                [r[1] for r in ref["summary"]["per_step"]], rtol=1e-5)
+    # per step, not only the phase totals: active pairs and child positions
+    assert got["summary"]["per_step_detail"] == ref["summary"]["per_step_detail"]
+    assert sum(r[0] for r in got["summary"]["per_step_detail"]) == got["summary"]["active_pairs"]
 
 
 def test_the_plan_has_a_short_last_batch_and_full_steps_of_eight_pairs() -> None:

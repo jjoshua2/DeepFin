@@ -160,7 +160,8 @@ def collect_settings(a: argparse.Namespace) -> CollectSettings:
         book_mix=tuple(float(x) for x in a.book_mix.split(",")), rows_per_shard=a.rows_per_shard,
         opening_sampling=a.opening_sampling, dup_sketch_budget=a.dup_sketch_budget,
         exact_repeat_vs_previous=a.exact_repeat_vs_previous,
-        device=a.device, eval_max_batch=a.eval_max_batch, collect_procs=resolve_collect_procs(a), seed=a.seed,
+        device=a.device, eval_max_batch=a.eval_max_batch, eval_chunk_rows=a.eval_chunk_rows,
+        collect_procs=resolve_collect_procs(a), seed=a.seed,
     )
 
 
@@ -346,6 +347,8 @@ ADDED_SINCE_PINNING = {"init_optimizer_state": "fresh",
                        "lr_schedule": "flat",
                        # Every collect before --collect-procs ran as one process.
                        "collect_procs": 1, "accum_steps": 1, "snapshot_rows": None,
+                       # Every run before --eval-chunk-rows ran without the flag (execution-only: a forward-size bound).
+                       "eval_chunk_rows": None,
                        # Every run before --value-rows-per-game trained the value on every row.
                        "value_rows_per_game": 0,
                        # Every run before --root-full-width searched the plain topk root.
@@ -688,6 +691,13 @@ def _common(p: argparse.ArgumentParser) -> None:
     c.add_argument("--eval-max-batch", type=int, default=None,
                    help="CUDA evaluator batch cap (default: the search's leaf-buffer size at this "
                         "--concurrency / --topk; a smaller value is refused -- it would drop leaf evaluations)")
+    c.add_argument("--eval-chunk-rows", type=int, default=None, metavar="N",
+                   help="TEMPORARY, for the N comparison: most rows one network forward of the CUDA evaluator "
+                        "runs (1..2048); a larger leaf batch is forwarded in row-ordered chunks (same search, results "
+                        "equal up to bf16 batching effects). Default: the evaluator's CUDA-graph row cap (512), so "
+                        "every forward replays a graph; chunks above 512 rows run EAGER, counted in "
+                        "cuda_graph_stats eager_over_max_rows, which is 0 only at <= 512. Bounds peak GPU memory; "
+                        "recorded as eval_chunk_rows_realised")
     c.add_argument("--collect-procs", type=int, default=None, metavar="K",
                    help="collect processes sharing the device, each playing a disjoint slice of the openings "
                         "with its own seed (pinned: it sets the RNG streams). Default: the run's pinned value, "

@@ -96,6 +96,25 @@ verdict and before the generation-2 release (revision 5; below).
   hold by re-rolling (B4);
 - **Commands is the reviewer's operator sequence, steps 0–10.**
 
+**Revision 6** (addendum after generation 2's first launch; [below](#revision-6-the-arm_zq2-optimizer-check-refused-a-correct-run)):
+- **the arm_Zq2 take-effect check could never pass on a second generation**, and it stopped the
+  run at 18:56:27 after a correct 1,478-update training step. It required `realised_optimizer`
+  equal to generation 1's as a whole dict. The flat schedule and the init-checkpoint
+  hyper-parameters make group 0's learning rate move by about 5e-12 relative per generation;
+- **the amended check is exact and stronger:**
+  - every non-LR field equal to generation 1's;
+  - groups 1–3 at the `--lr` flag;
+  - `base_lrs[0]` = `--lr` × (the init checkpoint's group-0 lr / group-2 lr);
+  - group 0's realised lr = the schedule's closed form at t = updates − 1.
+  All four are bit-exact on both generations' real files;
+- **`move_aside.sh arm_Zq2` refused its own documented step name** (its pattern `[a-z0-9_]` has no
+  upper case). Fixed in `move_aside.sh` v5;
+- **a launcher change refuses every DONE step (exit 84)**, because each step's input record carries
+  the launcher's sha. v6 accepts, for the five steps before arm_Zq2 only, a record made under v5's
+  sha whose other inputs are equal, and logs each acceptance;
+- recovery: move arm_Zq2 aside (kept, never deleted), rerun the 7-minute step under v6, continue.
+  One descriptive datum is registered: whether the rerun's `model.pt` equals the first attempt's.
+
 **What it is.** Match 8 nominated "Zq + per-generation recalibration" for a 2-generation run under
 its own record. This is that record. It has three parts:
 - **Stage 0:** a replication of match 8's player under a new seed;
@@ -495,7 +514,10 @@ peak RSS).
 - **Take effect.** After training, the launcher requires the trainer's own summary to show:
   - `realised_w_wdl` 1.0, `realised_search_wdl_frac` 0.5, `anchor` none, target temperature 1.0,
     SL fraction 0;
-  - `realised_optimizer` and `realised_lr_param_groups` **equal to generation 1's**.
+  - `realised_optimizer` and `realised_lr_param_groups` **equal to generation 1's**. Revision 6
+    replaces this with the exact form in the revision-6 addendum: non-LR fields equal; the LRs
+    equal to what the flags, the init checkpoint and the schedule must produce. The whole-dict
+    equality could never hold on a second generation.
 - **KL is off, as in generation 1.** The value-anchor screen (#1475) is testing `--kl-wdl` toward
   the SL base on the pilot's data. Whatever it finds does not change this recipe (recipe frozen,
   below).
@@ -624,7 +646,8 @@ readout window):
 | code at collect | C0 `6c72b821b` | PIN `0c795fb7a` | no (play path unchanged; see B) |
 | training init | SL base | `gen1_baked.pt` | yes, part of "a generation" |
 | **value pull on the trunk at step 0** (trunk ‖g_value‖ / ‖g_policy‖, same pilot rows, 2 × 256, generation-1 targets) | **1.00** (SL base start) | **0.89** (baked start); a raw start would be 0.59; final layer's relative step × 0.70 (‖W‖ 1.32 vs 0.93; generation 1 moved it by ≈ 0.001) | **a named confound, measured** (B4); re-measured on generation 2's own rows before training (`trunk2`) |
-| init checkpoint's `grad_clip_mode` field | none | `zclip` | no: the realised optimizer must equal generation 1's (checked) |
+| init checkpoint's `grad_clip_mode` field | none | `zclip` | no: the realised optimizer's non-LR fields must equal generation 1's (checked; revision 6) |
+| matrix-group (group 0) learning rate | 6.0000000000000015e-05 → 5.9999999999720006e-05 over 1,412 updates | 5.999999999972e-05 → 5.9999999999413184e-05 over 1,478 updates | no: −5e-12 relative per generation, from the flat schedule and the init-checkpoint multiplier (revision 6 addendum) |
 | recalibration reference | SL base (match 8's fit) | `gen1_baked.pt` | the registered per-generation rule |
 | training data | generation-1 collect | generation-2 collect | follows from the collecting net |
 | every training flag | as B4 | identical | — |
@@ -1231,6 +1254,330 @@ instead of about 21 GPU-h.
     | model sha unchecked | `stage_checks.py` |
 
     The collect-gate mutant (B3b) is unchanged and banked with its own test.
+
+## Revision 6: the arm_Zq2 optimizer check refused a correct run
+
+Written 2026-11-22 after generation 2's first launch stopped. **No registered reading had been
+made.** Stage 0 was already read. The generation-2 steps that make readings had not run: `fit2`,
+`bake2`, `m_g2_vs_g1`, `m_g2_vs_base` and the verdicts. Nothing in this addendum changes a
+pre-registered analysis, threshold or rule; it changes one take-effect guard, which reads no result.
+
+**File versions.** The launcher in the bank is file version v5 (`launch_gen2.sh.v1` … `.v4` are
+kept beside it). This revision's launcher is file version **v6**, and v5 is kept as
+`launch_gen2.sh.v5`. `move_aside.sh` goes v4 → v5, `guard_test.sh` v7 → v8, `fakepy.py` v1 → v2.
+
+### What happened
+
+- `equiv`, `fitctl`, `collect`, `checks` and `trunk2` all exited 0, and their completion checks
+  pass (`G2/gen2/*.exit`; `G2/resume.log`).
+- **`arm_Zq2` trained 1,478 updates in 397.5 s** and wrote `G2/gen2/arm_Zq2/gen_0001/train/model.pt`
+  (sha256 `1db00ecaf5b271de476f5c4aba7dd992e8e3133be058e3bf238cfabac32f1b1a`). It differs from the
+  pilot's 1,412 because generation 2's collection has 756,711 training rows.
+- The launcher's take-effect check then wrote `G2/gen2/arm_Zq2.check.json` with
+  `"optimizer_equals_gen1": false, "ok": false`. The step exited 1, and so did the launcher
+  (`G2/gen2/exit`: `1 2026-11-22T18:56:27-05:00`).
+- Every other field of the check passed: `realised_w_wdl` 1.0, `realised_search_wdl_frac` 0.5,
+  anchor null, target temperature 1.0, SL fraction 0.
+
+### The diff
+
+`realised_optimizer` and `realised_lr_param_groups`, deep-diffed between generation 2's
+`metrics.json` and the pilot's `arm_Zq/gen_0001/train/metrics.json`. The coordinator computed the
+diff first; I recomputed it independently. **Only four floats differ, all group 0's (the Aurora
+matrix group's) learning rate:**
+
+| field | generation 2 | generation 1 | relative |
+|---|---|---|---|
+| `base_lrs[0]` | 5.999999999972e-05 | 6.0000000000000015e-05 | 4.7e-12 |
+| `param_group_lr[0]`, `param_group_table[0].lr`, `realised_lr_param_groups[0]` | 5.9999999999413184e-05 | 5.9999999999720006e-05 | 5.1e-12 |
+
+Every other field is equal: group sizes [48, 0, 142, 289], split names, clip mode and its
+parameters, every Aurora / AdamW hyper-parameter, and groups 1–3's learning rates (3e-6 exactly).
+
+### The cause, from the code at the PIN `0c795fb7a`
+
+1. **The "flat" schedule is a cosine.** `learn.py`'s `schedule_period` returns T_0 = 10⁹ for
+   `--lr-schedule flat`. `trainer_kwargs` passes `lr_schedule "cosine"` with one global
+   `lr_eta_min` = `--lr-floor` = 3e-6. torch's `CosineAnnealingWarmRestarts.get_lr` computes
+   eta_min + (base − eta_min) · (1 + cos(π · t / T_i)) / 2:
+   - groups 1–3 sit at base = eta_min = 3e-6 and never move;
+   - group 0 (base ≈ 6e-5) falls by about 2.8e-16 over a phase of about 1,400 updates.
+2. **Generation 2's base comes from generation 1's END learning rate.**
+   `--optimizer-hparams-source init-checkpoint` (in the pilot's Zq cell flags, which B4 uses
+   verbatim) sets `matrix_lr_multiplier = float(mat["lr"]) / float(aux["lr"])` from the init
+   checkpoint's saved param groups (`resolve_optimizer_hparams`). Those groups hold the LAST
+   realised learning rate. In `gen1_baked.pt` they are 5.9999999999720006e-05 and 3e-06, so the
+   multiplier is 19.999999999906667. The trainer builds `float(lr) * float(matrix_lr_multiplier)`
+   = 5.999999999972e-05, which is generation 2's `base_lrs[0]`, bit-exact.
+3. **The closed form reproduces both realised values bit-exactly at t = updates − 1:**
+   - generation 1 at t = 1,411 gives 5.9999999999720006e-05;
+   - generation 2 at t = 1,477 gives 5.9999999999413184e-05.
+   t = updates and t = updates − 2 give different floats, so the comparison pins t.
+
+**The optimizer STATE is fresh; only the learning-rate ratio is inherited.** `--optimizer-state fresh
+--init-optimizer-state fresh` are in the flags, as B4 registered ("Why fresh optimizer state"), so no
+moment or step count comes from generation 1. `--optimizer-hparams-source init-checkpoint` fills
+the hyper-parameters from the init checkpoint. Every one of them equals generation 1's except
+`matrix_lr_multiplier`, which is the checkpoint's group-0 / group-2 learning-rate ratio. The
+coordinator's first reading ("the optimizer state was carried") is corrected here.
+
+**Which registration governs.** B4 registered two things that cannot both hold from generation 2
+on:
+- (i) the pilot's Zq cell flags verbatim, which include `--optimizer-hparams-source
+  init-checkpoint` and the flat schedule;
+- (ii) "`realised_optimizer` … equal to generation 1's".
+
+Under (i), every generation inherits the previous generation's realised learning rate and trains
+its own number of updates, so (ii) as an exact dict equality can never hold. B4's own note already
+said the groups equal the SL base's "in every field except the realised `lr`".
+
+**(i) governs**: the flags are the recipe, and (ii) is a guard meant to show the recipe was
+realised. The only consequence of (i) is a learning-rate difference of about 5e-12 relative per
+generation in group 0. It is about 2e-16 absolute, 9 orders of magnitude below the 1e-2-relative
+scale at which an LR change alters training.
+
+**Why the harness missed it.** Revision 3–5's launcher harness fed the check fabricated
+`metrics.json` files with equal optimizer dicts: `guard_test/guard_test.sh` writes
+`"realised_optimizer": {"x": 1}` for both generations. Its fake trainer (`fakepy.py`) wrote
+generation 1's metrics as generation 2's. A fabricated pair cannot show that a gate can never pass
+on real data. The revision-6 harness is built from the REAL pair of files (below). The bank's
+launcher harness becomes `guard_test.sh` v8 with `fakepy.py` v2: the fake pilot holds generation
+1's real `metrics.json`, and the fake training writes generation 2's real `metrics.json` and
+manifest settings. It has one new case: arm_Zq2's check passes all six exact sub-checks. Results (`fix_test_v6/guard_v6/`):
+
+| harness | launcher | pass | fail | reading |
+|---|---|---|---|---|
+| v8 | v6 | 248 | 0 | the 247 cases of v7 plus the new one |
+| v8 | v5 | 202 | 43 | the first failure is "gen2: full run completes": v8 catches the defect |
+| v7 | v6 | 202 | 42 | v7's `{"x": 1}` fixture cannot meet an exact check, so v7 is retired with v5 |
+
+### The amended check (launcher v6; exact, no tolerance)
+
+`arm_Zq2` passes the optimizer part iff ALL of these hold:
+- (a) every non-LR field of `realised_optimizer` (the dict with `base_lrs`, `param_group_lr` and
+  each `param_group_table[i].lr` removed) equals generation 1's exactly;
+- (b) four groups in every LR list; groups 1–3 equal the `--lr` flag exactly in `base_lrs`,
+  `param_group_lr`, `param_group_table` and `realised_lr_param_groups`;
+- (c) `base_lrs[0] == lr × (g0_lr / g2_lr)`, bit-exact, with the trainer's expression order. g0_lr
+  and g2_lr are `gen1_baked.pt`'s saved `opt.param_groups[0].lr` and `[2].lr`
+  (5.9999999999720006e-05 and 3e-06), read with `torch.load` from the file whose sha256 is
+  `8dd6ac8c371d3c0deddd40cf181daccc14ae1bf884df487164d719761ab1cf9f`. They are pinned in the
+  launcher (`G1_SAVED_LR0`, `G1_SAVED_LR2`) beside the launcher's verification that `gen1_baked.pt` is
+  the file Stage 0 played (exit 92), so the inline check stays torch-free like every other check
+  there. The harness's first case reads both values with `torch.load` from that real file (same
+  sha) and requires them equal to the pinned pair. The check also requires the step manifest's
+  `inputs.init_checkpoint.sha256` to equal `gen1_baked.pt`'s sha;
+- (d) group 0's realised learning rate, in all three places, equals
+  eta_min + (base_lrs[0] − eta_min) · (1 + cos(π · t / 10⁹)) / 2 at t = updates − 1, bit-exact,
+  with eta_min = `--lr-floor`, in torch's expression order;
+- (e) the manifest shows `lr_schedule` flat, warmup 0, `accum_steps` 1, and
+  `optimizer_hparams_source` init-checkpoint.
+
+**This is stronger than v5's intent, not weaker.** It proves the group-0 learning rate came from
+generation 1's checkpoint and the registered schedule. A 1% error in the flag, a multiplier taken
+from the flags instead of the checkpoint, a one-ulp change anywhere, or an off-by-one t fails.
+
+**I chose the exact form over the reviewer's tolerance fallback** (relative ≤ 1e-9 plus the ratio
+check) because the exact form held on both generations' real files with the bank's torch build. The
+values are plain Python floats computed in the same order as the trainer and the scheduler. If a
+future torch build changed `get_lr`'s expression order, the check would refuse loudly (exit 1 at the
+step), never pass silently. The tolerance form remains the documented fallback for that case.
+
+**Harness** (bank `fix_test_v6/opt_check_test.sh`). It runs the check text extracted verbatim from
+the launcher, on the REAL pair of metrics / manifest files copied into `fixtures/` and on variants
+of them. **19 cases, all pass:**
+- the launcher's pinned pair equals `torch.load(gen1_baked.pt)`'s groups 0 and 2;
+- the real pair passes, and generation 1 against itself (init the SL base, its groups read with
+  torch) passes;
+- these fail:
+  - generation 2 checked against the wrong init checkpoint;
+  - a step manifest naming another init checkpoint;
+  - `--lr` 3.03e-6 (1%);
+  - an aux learning rate 1% off;
+  - group 2's lr one ulp off;
+  - `base_lrs[0]` one ulp off;
+  - group 0's realised lr one ulp off;
+  - updates + 1;
+  - Aurora momentum 0.9;
+  - clip mode none;
+  - group sizes changed;
+  - a missing LR group in either list;
+  - schedule cosine-phase;
+  - `w_wdl` 0.5.
+
+**Mutants** (`fix_test_v6/mut_opt/`; a kill counts only when the RESULT line is present), all
+killed, 11 of 11:
+- O1: the multiplier taken from the flags (× 20.0) instead of the checkpoint;
+- O2: t = updates instead of updates − 1;
+- O3: the non-LR comparison drops clip, groups and split;
+- O4: groups 1–3 unchecked;
+- O5: the closed form unchecked;
+- O6: `base_lrs[0]` within a 1% tolerance;
+- O7: the init sha and the base check both removed;
+- O8: v5's whole-dict equality (fails on the real pair);
+- O9: the schedule unchecked;
+- O10: the pinned group-0 lr replaced by the flag product 6.0000000000000015e-05;
+- O11: only the init-sha clause removed.
+
+### The resume path, and two defects the bank's own mechanism had
+
+1. **`move_aside.sh arm_Zq2` refused its own documented step.** Its first check was
+   `[[ "$s" =~ ^[a-z0-9_]+$ ]]`, with no upper case, so the run's only recovery command printed
+   "'arm_Zq2' is not a plain step name" (shown on a full copy of the bank). **v5** allows
+   `[A-Za-z0-9_]`; the step `case` still admits only the listed names. On the copy, v5:
+   - moves arm_Zq2's six paths aside;
+   - still refuses `equiv`, `collect` and `trunk2` ("completed"), `arm_Zq2/..` and an unknown name.
+
+   **Harness** (`fix_test_v6/move_aside_names_test.sh`). It parses every step name from the
+   launcher's own `step <name>` calls, plus `stage0`: 11 names. It requires each name to get past the
+   pattern and the `case`, and to move nothing it should not. A future step name the pattern cannot
+   express fails at build time. v5 passes 12 of 12 (the parse plus 11 names). The same harness on v4 (the mutant) fails on
+   `arm_Zq2`: "'arm_Zq2' is not a plain step name".
+2. **Any launcher change refuses every DONE step.** `<step>.inputs` records the launcher's sha, and
+   the prescan requires the record to equal the inputs now. So v6 alone would stop at exit 84 on
+   `equiv`. v6 adds `inputs_done_ok`:
+   - a DONE step whose record equals the inputs now under v6's sha passes;
+   - **only for the five literal step names `PRED_STEPS="equiv fitctl collect checks trunk2"`**, a
+     record made under exactly ONE prior launcher passes. That launcher is the literal constant
+     `PRED_LAUNCHER_SHA=55973fa937a031d50ef883682d70277573d65a9d56abf430fe2fb282c3c10f6d`, v5's
+     full sha as it appears in the bank's `BANK_SHA256SUMS` and in every `resume.log` run line of
+     this launch. It never accepts "any other sha". The record is compared by the same
+     `inputs_ok` as before, with only the expected launcher sha swapped, so the checks library,
+     prelaunch sums, seed and input files must still be equal. Each acceptance is logged to
+     `resume.log` with both shas;
+   - `arm_Zq2` and every later step require v6's own sha.
+
+   **What licenses accepting those records: the five steps are byte-identical in v5 and v6.**
+   `fix_test_v6/accepted_steps_identical.txt` diffs each function between the two launchers, and
+   every diff is empty:
+
+   ```
+   == equiv() : 73c6ed30c2f8d742 v5 / 73c6ed30c2f8d742 v6
+   == fitctl() : 596c99e2ab534a01 v5 / 596c99e2ab534a01 v6
+   == collect() : 3170d40d0bf6b2dc v5 / 3170d40d0bf6b2dc v6
+   == checks() : 6c7ed8fae5a31d3a v5 / 6c7ed8fae5a31d3a v6
+   == trunk2() : 67b45cab7e40a9ad v5 / 67b45cab7e40a9ad v6
+   == gen2_checks.sh (chk_equiv .. chk_trunk2): unchanged, 76dc0f69…, recorded in every .inputs as checks_lib_sha256
+   == the step calls: identical
+   ```
+
+   The whole v5 → v6 diff (`fix_test_v6/launch_v5_to_v6.diff`, 88 lines) has six hunks:
+   - the header comment (two hunks);
+   - the pinned `G1_SAVED_LR*` pair and `inputs_done_ok`;
+   - the two call sites that switch from `inputs_ok … $LAUNCHER_SHA` to `inputs_done_ok`;
+   - `train()`'s check.
+
+   Nothing that sources flags, verifies files or runs a step before arm_Zq2 changed.
+
+   **Harness** (`fix_test_v6/prescan_test.sh`): the prescan code extracted from the launcher, run on
+   a full copy of the bank after `move_aside.sh arm_Zq2`. **9 cases, all pass:**
+   - the prescan passes, logging exactly five accepts (equiv … trunk2);
+   - a third launcher sha, a changed seed, and a changed checks library each refuse with 84;
+   - arm_Zq2 not moved aside refuses with 88; interrupted, with 87;
+   - a DONE arm_Zq2 recorded under v5 is never accepted.
+
+   **Mutants** (all killed, 6 of 6):
+   - P1: `arm_Zq2` added to `PRED_STEPS`;
+   - P2: accept anything;
+   - P3: no predecessor fallback (the prescan stops with 84);
+   - P4: acceptance not logged;
+   - P5: only the launcher sha compared, other inputs skipped;
+   - P6: any prior launcher sha accepted (the record's own sha).
+
+**The other comparisons in the remaining steps.** Each was checked for a constant generation 2's
+own data cannot meet. None needs a change:
+
+| step | comparison | against |
+|---|---|---|
+| `arm_Zq2` completion (`stage_checks.py arm`) | model / init / reference-collect / source-collect sha256 | generation 2's own files |
+| `arm_Zq2` check | value mix, anchor, temperature, SL fraction | registered constants of the recipe (met) |
+| `arm_Zq2` check | optimizer | v6 above: exact, to what generation 2's flags, init checkpoint and update count must produce; non-LR fields to generation 1 |
+| `fit2` | `fit_value_recal.py` on generation 2's own hold-out (`--holdout-frac 0.05` of C2), toward `gen1_baked.pt`; no row or game count is compared | generation 2's own data |
+| `fit2` bounds | ln T2 ∈ [2 ln T1, −ln T1], b2 ∈ [2 b1, −b1] | a registered sanity bound built from generation 1's fit (intended) |
+| `bake2` | baked file's sha256 = record = verify; logits = src / T + b within LOGIT_TOL / PROB_TOL on the pilot's hold-out positions; policy bit-identical | its own files; the probe positions are only inputs, not data generation 2 must match |
+| matches | seat DONE = exactly 3,200 games with unique (pair_id, half), the registered seed, rows naming generation 2's baked sha and the PIN | registered design constants and generation 2's own sha |
+| verdicts | pool CI vs the registered thresholds | registered rules |
+
+No 1,412-update, 761,979-row or 722,742-row constant appears in any remaining step.
+
+### Recovery (the operator's one script: `operator_relaunch_v6.sh`)
+
+It refuses unless:
+- no launch holds the lock;
+- `gen2/exit` and `arm_Zq2.exit` read the failed attempt;
+- the bank verifies against its current sums, and the staged files against theirs;
+- the bank's launcher is v5 and its `move_aside.sh` is v4;
+- `arm_Zq2`'s `model.pt` is `1db00eca…`;
+- **first, before anything changes, the operator's GPU gate passes on a MEASURED idle.** The script
+  reads `nvidia-smi` memory.used (the maximum line) and runs the pinned operator gate on it: the
+  sibling bank's `operator_gpu_check.sh`, sha `2c4efb70…`, the same file `run_smoke.sh` runs. The
+  gate requires memory within ± 512, utilisation < 10% over 5 s, and no GPU job of this user. No
+  idle number is carried in from this record. The 3,285 MiB I read while writing it was not idle:
+  the coordinator's #1511 collect measurements were running. The coordinator stops those and runs
+  the script.
+
+Then it:
+1. installs launcher v6, `move_aside.sh` v5, `guard_test.sh` v8, `fakepy.py` v2, the harnesses
+   (`fix_test_v6/`) and the v6 `BANK_SHA256SUMS`. Each replaced file is kept as `.v5`, `.v4`,
+   `.v7` or `.v1`. It then verifies and logs;
+2. **registers the descriptive datum before the rerun** in `gen2/arm_Zq2.first_attempt.json`: the
+   first attempt's sha256 `1db00eca…`;
+3. runs `move_aside.sh arm_Zq2`. **The first attempt's `model.pt` is kept** at
+   `gen2/arm_Zq2.aside.<stamp>/gen_0001/train/model.pt` and never deleted or read for a result;
+4. **replaces the gen2 release line with the measured value.** The guard reads the first `gen2`
+   line and requires every `memory.used` line within idle_mib ± 512. The old line's
+   `idle_mib=2181`, written at 16:46, is stale. The script writes `gen2 idle_mib=<measured> <time>`
+   in place of it, keeps the `stage0` line, and keeps the old file as
+   `GPU_RELEASED_BY_OPERATOR.before_v6`;
+5. relaunches (`setsid nohup launch_gen2.sh >> gen2/run.out`). The prescan accepts the five earlier
+   steps, so **the collection is not redone**. arm_Zq2 reruns (about 7 minutes of training), then
+   fit2 → bake2 → the two matches.
+
+**The script was run end to end in `--no-launch` mode on a full copy of the bank,** restored to
+the failed-attempt state. It:
+- refused while the copy carried a non-bank `move_aside.sh` (sums mismatch, exit 93);
+- then installed, verified the copy against the v6 sums, wrote `arm_Zq2.first_attempt.json` and
+  moved the six arm_Zq2 paths aside, with `model.pt` `1db00eca…` kept;
+- on a second run, recognised the installed state;
+- in launch mode with `CUDA_VISIBLE_DEVICES` empty, refused (94) before the gate.
+
+After the install, the installed harnesses pass on the copy: names 12 of 12, prescan 9 of 9. The
+gate, release-line and launch path were not run: that is the operator's GPU step. The release-line
+rewrite (replace the first-word-`gen2` line, keep `stage0`) was checked on a copy of the file.
+
+**Staging and sums.** Everything is staged in `$OPS/rl-run1-gen2.staging-v6/`, beside the bank;
+nothing was written into the bank. Staged files:
+- `gen2/launch_gen2.sh` v6 (`731368c0…`), `gen2/move_aside.sh` v5 (`77903bd3…`);
+- `guard_test/guard_test.sh` v8, `guard_test/fakepy.py` v2;
+- `fix_test/` (the harnesses, fixtures, mutant runs, diffs and outputs);
+- the v6 `BANK_SHA256SUMS` (`d0542e31…`) and `STAGED_SHA256SUMS` (`518355d7…`);
+- `operator_relaunch_v6.sh` (`b40ccd0c…`).
+
+The v6 sums against the bank's current sums: 482 → 550 rows. Exactly four rows change:
+- `gen2/launch_gen2.sh` 55973fa9 → 731368c0;
+- `gen2/move_aside.sh` a5dcd101 → 77903bd3;
+- `guard_test/guard_test.sh` 556f034d → 9b0b7d20;
+- `guard_test/fakepy.py` 22959db8 → 16c74aa4.
+
+68 rows are added:
+- the four predecessors under `.v5` / `.v4` / `.v7` / `.v1`, with the same shas as the rows they
+  replace;
+- `BANK_SHA256SUMS.v5` (`2d6e1b67…`, the current sums file);
+- 63 files under `fix_test_v6/`.
+
+Every other sealed file's row is byte-identical, so its file is too.
+
+```bash
+OPS=$HOME/chess-artifacts/operations
+# after this PR's review verdict and merge; the coordinator stops the #1511 chain and every GPU job first
+$OPS/rl-run1-gen2.staging-v6/operator_relaunch_v6.sh     # gate on the MEASURED idle, install, move aside, release, launch
+tail -f $OPS/rl-run1-gen2/gen2/run.out $OPS/rl-run1-gen2/resume.log
+```
+
+**Registered now, so no choice is left for later:**
+- the run continues with the **re-run's** net, as the launcher's resume semantics dictate;
+- whether its `model.pt` sha256 equals `1db00eca…` is reported in the results record as a
+  determinism datum. Either outcome is fine; neither changes anything.
 
 ## Provenance and incident
 

@@ -923,6 +923,12 @@ def root_weight(n_pairs: int) -> float:
 
 
 SIBLING_LOSS_FORMS = ("diff", "order")
+# ``per_step`` keeps its (pairs, loss) shape for existing readers. ``per_step_detail`` runs beside it, one entry per
+# update: (active pairs, child positions forwarded); the root-list unit adds the roots trained (roots with >= 1 pair
+# at |dq| >= order_min_dq, whereas ``--sibling-rows`` counts roots that carry a list). Steps restored from a snapshot
+# written before the field existed have None there.
+PER_STEP_DETAIL_FIELDS = ("active_pairs", "child_positions")
+PER_STEP_DETAIL_FIELDS_ROOTS = (*PER_STEP_DETAIL_FIELDS, "roots_trained")
 SIBLING_COUNTERS = ("steps", "pairs", "loss_sum", "abs_resid_sum", "per_step", "last_cursor")
 
 
@@ -976,6 +982,7 @@ class SiblingTerm:
         self.loss_sum = 0.0
         self.abs_resid_sum = 0.0
         self.per_step: list[list[float]] = []
+        self.per_step_detail: list[list[int] | None] = []
         self.last_cursor = int(getattr(sampler, "cursor", 0))
 
     def _batch_pairs(self) -> np.ndarray:
@@ -1041,6 +1048,7 @@ class SiblingTerm:
         self.steps += 1
         if not ids.size:   # no pair this step: still a 0-valued leaf, so a sibling-only step stays well-defined
             self.per_step.append([0, 0.0])
+            self.per_step_detail.append([0, 0])
             return self._zero_leaf()
         scale = self._row_scale(batch)
         self._require_cleared_grads()
@@ -1066,6 +1074,7 @@ class SiblingTerm:
         self.abs_resid_sum += float(abs_resid_sum)
         self.active += int(active_sum)
         self.per_step.append([n, total / n])
+        self.per_step_detail.append([int(active_sum), 2 * n])
         # Its gradient is already in .grad. A 0-valued leaf (no parameter behind it) keeps the Trainer's
         # ``backward`` well-defined when this term is the only loss (every other weight 0).
         import torch
@@ -1100,7 +1109,9 @@ class SiblingTerm:
 
     def state(self) -> dict[str, Any]:
         return {"steps": self.steps, "pairs": self.pairs_seen, "loss_sum": self.loss_sum,
-                "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step), "last_cursor": self.last_cursor,
+                "abs_resid_sum": self.abs_resid_sum, "per_step": list(self.per_step),
+                "per_step_detail": [None if x is None else list(x) for x in self.per_step_detail],
+                "last_cursor": self.last_cursor,
                 "chunk_pairs": self.chunk_pairs, "chunk_segments": [list(x) for x in self.chunk_segments],
                 "active": self.active, "loss": self.loss,
                 "order_margin": self.order_margin, "order_min_dq": self.order_min_dq, "unit": self.unit,
@@ -1123,6 +1134,9 @@ class SiblingTerm:
         self.loss_sum = float(state["loss_sum"])
         self.abs_resid_sum = float(state["abs_resid_sum"])
         self.per_step = [list(x) for x in state["per_step"]]
+        detail = state.get("per_step_detail")   # absent before the field: those steps have no detail
+        self.per_step_detail = ([None] * len(self.per_step) if detail is None
+                                else [None if x is None else list(x) for x in detail])
         self.last_cursor = int(state["last_cursor"])
         self.active = int(state.get("active", 0))
         # chunk_pairs changes memory, not the update: a phase may resume at another value (OOM recovery). Each
@@ -1152,7 +1166,8 @@ class SiblingTerm:
                 "mean_weighted_huber": self.loss_sum / n if n else None,   # kept for diff-era readers
                 "mean_weighted_loss": self.loss_sum / n if n else None,    # form-neutral: Huber (diff) or ranking (order)
                 "mean_abs_resid_train": self.abs_resid_sum / n if n else None,
-                "per_step": self.per_step}
+                "per_step": self.per_step, "per_step_detail": self.per_step_detail,
+                "per_step_detail_fields": list(PER_STEP_DETAIL_FIELDS)}
 
 
 class SiblingListTerm(SiblingTerm):
@@ -1218,6 +1233,7 @@ class SiblingListTerm(SiblingTerm):
         z = float(sum(r["a"] for r in plan))
         if not plan or z <= 0:   # no eligible root this step: the same 0-valued leaf as the pair unit
             self.per_step.append([0, 0.0])
+            self.per_step_detail.append([0, 0, 0])
             return self._zero_leaf()
         scale = self._row_scale(batch)
         self._require_cleared_grads()
@@ -1251,6 +1267,7 @@ class SiblingListTerm(SiblingTerm):
         self.abs_resid_sum += float(abs_resid_sum)
         self.active += int(active_sum)
         self.per_step.append([n_pairs, value])
+        self.per_step_detail.append([int(active_sum), int(sum(r["count"] for r in plan)), len(plan)])
         import torch
 
         return torch.zeros((), device=step_value.device, requires_grad=True)
@@ -1307,7 +1324,8 @@ class SiblingListTerm(SiblingTerm):
         out = super().summary()
         term_steps = sum(1 for r in self.per_step if r[0])
         mean_step = self.loss_sum / term_steps if term_steps else None
-        out.update({"roots": self.roots_seen, "mean_step_loss": mean_step, "mean_weighted_loss": mean_step,
+        out.update({"roots": self.roots_seen, "per_step_detail_fields": list(PER_STEP_DETAIL_FIELDS_ROOTS),
+                    "mean_step_loss": mean_step, "mean_weighted_loss": mean_step,
                     "mean_weighted_huber": None, "root_weight": f"n / (1 + (n - 1) * {ROOT_PAIR_ICC})",
                     "loss_note": "roots: mean_weighted_loss is the mean per-step term value (per-root means, "
                                  "n_eff-weighted over roots)"})

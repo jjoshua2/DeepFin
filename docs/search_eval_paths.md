@@ -46,6 +46,17 @@ merging.
 | Pipelined slots (overlap search with the device) | 2-slot handles | within C only | 2 slots per worker | 2 slots | no (synchronous per walker; concurrency from N walkers) | **H only**; G is serial | H | broker overlaps across clients |
 | Failure / drain / quarantine | `async_safety.py`, pool `_drain_failed` | process-level | yes (device drop, degrade) | partial (`_release_outstanding`) | vloss release (`walker_pool.py` B7 guard) | process-level | process-level | `broker_hang.py` |
 
+**Forward chunking (PR #1511).** With graphs on, `DirectGPUEvaluator` forwards a call larger than
+`cuda_graph_max_rows` (512 by default) as consecutive graph-replayed chunks of at most that many rows. Before,
+such a call ran as one eager forward. This changes forward shapes and forward counters for the consumers that run
+with graphs on:
+- the arena (`scripts/arena_standard.py`);
+- the RL collector, at `--eval-chunk-rows`, default 512;
+- `scripts/core_finite_collect.py` (protocol `serving` with `cuda_graphs`): `serving['forwards']` no longer counts
+  above-cap calls, whose chunks are graph replays (`cuda_graph_stats.forward_chunks`);
+- `scripts/bench_arena_identity.py`: its `forwards` counts evaluator calls, which are no longer network forwards
+  above the cap.
+
 ### 1.3 Duplicated logic (diverged or able to)
 
 - **The submit/finish pipeline.** `PucvChunker._prepare_submit` / finish (`puct_vl.py:~325-400`) and `MultiGpuPucvPool._prepare_submit` / `_finish_pending` (`multi_gpu_pucv_pool.py:1495-`) are the same design, copied. They have already diverged: #1440's compaction, fan-out and vectorised scatter exist only in the pool, and the pool's per-buffer output arrays and counters are not in `PucvChunker`.
