@@ -39,9 +39,9 @@ File stamps are SHA-256 prefixes. `G2/` means the bank directory.
   - neither improves: "no second measured step".
 - **With Stage 0 not "replicates", attribution between generations is unread in every reachable outcome.** B6's
   escape, "attribution between generations unread unless Stage 0 replicated and gen 2 vs gen 1 improved", is closed.
-- **Option (ii), the fresh generation-1 replicate (record part C3).** The record's advice against using it
-  before generation 2 applied to Stage 0's result. For the later decision after B6, see the registered
-  verdict below.
+- **Option (ii), the fresh generation-1 replicate (record part C3).** The record advised against it before
+  generation 2 because Stage 0 read adoptable. After B6 it remains a costed, unregistered option for the owner;
+  this record does not recommend it.
 
 ### Estimate (the record's estimator, on the banked games)
 
@@ -204,7 +204,10 @@ attempt remains in the bank. `G2/gen2/exit` [`47acd1b1`] records exit 0 at 23:11
   compared the exact closed form, and accepted the earlier completed steps with their inputs unchanged.
   The operator relaunched with the 20:11:44 ET release. The first model (SHA-256 prefix `1db00eca`) was
   kept aside. The rerun model (prefix `5d019e5e`) differed byte for byte and was the source for the bake.
-  This was a descriptive comparison. Sources: `G2/gen2/arm_Zq2.first_attempt.json` [`5565cf92`],
+  **The registered determinism datum (#1517): re-trained `model.pt` sha256 equal to the first attempt's: no**
+  (`5d019e5e…` vs `1db00eca…`). It is descriptive only, as registered, and the run continued with the rerun's net.
+  Re-running training re-drew GPU non-determinism; only the first attempt's optimizer fields were read (the
+  take-effect check), never its losses or its net. Sources: `G2/gen2/arm_Zq2.first_attempt.json` [`5565cf92`],
   `G2/GPU_RELEASED_BY_OPERATOR` [`1d815e88`], `G2/gen2/arm_Zq2.check.json` [`f11f1c76`],
   `G2/gen2/gen2_baked.pt.json` [`68a005b5`].
 - The rerun took 467.65 s and passed every optimizer check. It completed **1,478 updates**, drawing
@@ -250,3 +253,13 @@ positive. This yields adoptable on both matches, with neither improvement nor da
 rules. There is no measured cumulative improvement over the SL base, and Stage 0 did not replicate the
 first step. The terminal verdict is `G2/gen2/verdicts.json` [`f02646f7`]. B6 leaves the next
 experiment choice with the owner.
+
+### Carried to the next generation's bank (#1517 review MINORs; the generation-2 bank is not edited again)
+
+1. No harness case perturbs only `param_group_lr[0]` or only `param_group_table[0].lr`, so the reviewer's mutant R1
+   survives. The next harness perturbs each of the three group-0 places on its own.
+2. `operator_relaunch_v6.sh` is not idempotent after a failure between install and move-aside, and a second
+   launch-mode run overwrites `GPU_RELEASED_BY_OPERATOR.before_v6`. The next operator script must make each step
+   re-entrant and must never overwrite a kept file.
+3. Its aside check (line 74) lacks `|| exit 3`.
+4. It does not pin its own sha256.
