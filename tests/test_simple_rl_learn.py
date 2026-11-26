@@ -503,7 +503,8 @@ def test_mirror_prob_setting_reaches_the_batch_the_model_trains_on() -> None:
     assert trainer_on.mirror_prob == 1.0
     rows = _sampler().sample_batch_arrays(16)["x"].astype(np.float32)
     np.testing.assert_array_equal(plain, rows)  # same seed, same rows: the two runs differ only by the mirror
-    expected = np.stack([mirror_x(r, input_history_encoding=trainer_on._input_history_encoding) for r in rows])
+    encoding = trainer_on._input_history_encoding
+    expected = np.stack([mirror_x(np.asarray(r), input_history_encoding=encoding) for r in rows])
     assert not np.array_equal(expected, rows)
     np.testing.assert_array_equal(mirrored, expected)
 
