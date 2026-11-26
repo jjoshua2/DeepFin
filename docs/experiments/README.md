@@ -1,5 +1,7 @@
 # Experiment records
 
+- [2026-11-26: RL run 1 — data volume from the same actor (pre-registration)](2026-11-26-rl-run1-banked-data-volume.md) — one variable: distinct rows played by `gen1_baked.pt`, trained once each with generation 2's recipe from the same parent. Cells: k1 = the existing gen 2 net; kA = 1.48× (gen2 + both successor banks), registered now; kB 2.48× and kC 3.47× join by addendum once the HOLD banks are admitted. Each cell's banks are pooled into one collection, copied byte-identically, with a harness and mutants. An 800-game paired screen vs the parent can only stop a cell for damage. Survivors play 6,400 games vs the parent and 6,400 vs the SL base on generation 2's seeds; improves iff LB95 > 0. ≈ 3.3 GPU-h per cell.
+
 - [2026-09-19: Workspace storage migration and queued-job adoption](2026-09-19-workspace-storage.md)
 
 Bend engine records and their evidence live on the `bend` branch (see
