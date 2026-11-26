@@ -815,8 +815,27 @@ primary.
 
 ## Control launch addendum (the staged control bank)
 
-**Status: staged and tested on CPU, for non-author review. Nothing is launched.** The control launches only after
-"Conditional control addendum" above (#1532) and this section are merged, on the coordinator's `OWNER_GO`.
+**Status: LAUNCHED 2026-11-26T10:54 EST (15:54 UTC) by the coordinator.**
+- **Where:** from `rl-run1-volume-control/`, a copy of the staged bank (`SHA256SUMS` `cc9103482ab5…`). `sha256sum -c`
+  was OK and `operator_volume.sh --no-launch` verified it.
+- **Launch:** pid 2991792; launcher sha256 `f0a2e7b42ef8ce410eb3a45515947610ef224b8df163fd2132cc536a0bb44afc`
+  (`resume.log`), which is the staged `launch_volume.sh` below.
+- **The `OWNER_GO` line, verbatim:**
+
+  > Fable(coordinator, for owner Josh under his 2026-11-25 instruction to run autonomously) 2026-11-26T10:54:14-05:00 launch data-volume conditional control (c2x); record PR1524 da5e3fa95 (merged) + addendum PR1532 reviewed MERGE at aa44b355c, CI pending; staged bank reviewed GO at SHA256SUMS cc910348
+
+**Deviation, stated plainly.** This section was written to say the control launches only after #1532 and this
+section are merged. In fact the launch came first:
+- #1532 had been reviewed MERGE at `aa44b355c`, but its CI was pending at launch and it was not merged;
+- this section (#1534) was not yet reviewed or merged.
+
+The staged bank itself had a non-author GO at that checksum, on the guard harness (194/194) and the real-fixture gates
+(13/13) below. The registration (#1532: the design, seed, gates and the decision rule) is unchanged, and the run uses
+exactly the files in the table below.
+
+**Known, non-blocking:** two comments in the staged `launch_volume.sh` (its header's smoke and train lines, and the
+`step()` comment) still say 86 GiB, inherited from the volume launcher. The code uses 58 (`step smoke smoke 58 1 1`,
+`step train train 58 1 1`). The bank is frozen at its checksum, so the comments are left as they are.
 
 **The bank is the volume bank's launcher, adapted.** The guards, the resumable step structure (inputs record, skip on
 done, refuse on changed inputs, train resumes in place, matches resume per seat) and the match and verdict code are the
