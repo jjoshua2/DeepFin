@@ -95,6 +95,7 @@ class ReferenceListTerm(sib.SiblingListTerm):
         v = sib.child_values(self.model(torch.from_numpy(self.lists.child_inputs(ids)).float())["wdl"])
         num: Any = 0.0
         den, n_all, o = 0.0, 0, 0
+        act_step = children_step = roots_step = 0
         for st, c in spans:
             terms = []
             for i in range(c):
@@ -107,7 +108,10 @@ class ReferenceListTerm(sib.SiblingListTerm):
                     terms.append(wv * min(abs(dq), 0.62) * torch.relu(min(M, abs(dq)) - float(np.sign(dq)) * dv))
             o += c
             self.active += sum(int(float(x.detach()) > 0) for x in terms)
-            if terms:
+            act_step += sum(int(float(x.detach()) > 0) for x in terms)
+            if terms:   # a root with no pair >= t is not forwarded by the production term: not counted
+                children_step += c
+                roots_step += 1
                 n = len(terms)
                 a = n / (1 + (n - 1) * 0.08)
                 num = num + a * torch.stack(terms).mean()
@@ -115,11 +119,13 @@ class ReferenceListTerm(sib.SiblingListTerm):
                 n_all += n
         if not n_all:
             self.per_step.append([0, 0.0])
+            self.per_step_detail.append([0, 0, 0])
             return None
         loss = num / den
         self.pairs_seen += n_all
         self.loss_sum += float(loss.detach())
         self.per_step.append([n_all, float(loss.detach())])
+        self.per_step_detail.append([act_step, children_step, roots_step])
         return self.w * loss
 
 
@@ -157,6 +163,11 @@ def _assert_equal(got: dict[str, Any], ref: dict[str, Any]) -> None:
         np.testing.assert_allclose(got["weights"][n].numpy(), p.numpy(), rtol=2e-4, atol=1e-6, err_msg=n)
     assert [r[0] for r in got["summary"]["per_step"]] == [r[0] for r in ref["summary"]["per_step"]]
     assert got["summary"]["active_pairs"] == ref["summary"]["active_pairs"]
+    # per step, not only the phase totals: active pairs, child positions, roots trained
+    assert got["summary"]["per_step_detail_fields"] == ["active_pairs", "child_positions", "roots_trained"]
+    assert got["summary"]["per_step_detail"] == ref["summary"]["per_step_detail"]
+    assert sum(r[0] for r in got["summary"]["per_step_detail"]) == got["summary"]["active_pairs"]
+    assert sum(r[2] for r in got["summary"]["per_step_detail"]) == got["summary"]["roots"]
     np.testing.assert_allclose([r[1] for r in got["summary"]["per_step"]],
                                [r[1] for r in ref["summary"]["per_step"]], rtol=1e-5)
 
@@ -429,10 +440,15 @@ def test_a_snapshot_from_before_the_child_position_field_counts_from_the_restore
     assert n > 0
     assert s["child_positions_from_step"] == 10
     assert s["child_positions_per_step"] == 2 * n
+    # the per-step detail: None for the 10 restored steps (never invented), then the real step's counts
+    assert s["per_step_detail"][:10] == [None] * 10
+    assert s["per_step_detail"][10][1] == 2 * n
+    assert len(s["per_step_detail"]) == len(s["per_step"]) == 11
     st = term.state()
     fresh = _setup("pairs_diff", w_policy=1.0, w_wdl=1.0, empty=False)[2]
     fresh.restore(st)   # a state that has the field keeps its starting step
     assert fresh.summary()["child_positions_per_step"] == 2 * n
+    assert fresh.summary()["per_step_detail"] == s["per_step_detail"]   # the detail survives a state round trip
 
 
 # The #1501-era resume key, re-implemented here from that code (main 3dd621029) rather than produced by the
@@ -627,7 +643,7 @@ def test_an_unreadable_resume_state_is_refused_with_a_message_never_deleted(
     snaps = _snaps(d)
     newest = d / "gen_0001" / "train" / SNAPSHOTS / snaps[-1] / RESUME_STATE
     newest.write_bytes(newest.read_bytes()[:100])   # truncated
-    with pytest.raises(RuntimeError, match=f"snapshot {snaps[-1]}: {RESUME_STATE} unreadable"):
+    with pytest.raises(RuntimeError, match=f"snapshot {snaps[-1]}: {RESUME_STATE} could not be restored"):
         _train(run, d, s)
     assert _snaps(d) == snaps
     assert newest.stat().st_size == 100
