@@ -4,7 +4,7 @@
 - this record merged;
 - the admission record merged (`2026-11-26-banked-collections-admission.md`, #1523);
 - the pooled bank built from it and read back in staging;
-- the real kC pool rebuilt from the merged admission record, the launch-time host-RAM floor and the GPU memory smoke (below);
+- the real pool of the trained cell (kC; kB only after the fallback) rebuilt from the merged admission record, the launch-time host-RAM floor and the GPU memory smoke (below);
 - a free GPU.
 
 Only CPU work has been done for this record.
@@ -192,7 +192,8 @@ are one re-sealed shard of each of the five banks.
     a named FAIL line;
   - results in `test/mut_pool_v2.out` [`55232da5`] and `test/mut_pool_v2/mutant_results.json`.
 - The starts mutant (M16) is killed by C18. The two admission mutants (M17, M18) are killed by the P5 cases.
-- After the admission record merges, the real kC pool is built bound to the merged record and read back over every
+- After the admission record merges, the real pool of the trained cell (`pool_<cell>`, kC unless the fallback selects
+  kB) is built bound to the merged record and read back over every
   shard (`pool_harness.py real`). The launch addendum quotes those read-backs.
 
 ## Training, checkpoints and recalibration
@@ -207,8 +208,9 @@ with these exceptions:
 
 **Recalibration at every checkpoint and at the final.**
 - Each is fitted with `scripts/fit_value_recal.py` at the pin: `--net` = the checkpoint's `model.pt`, `--reference`
-  = `gen1_baked.pt`, **`--collect-dir rl-run1-volume/pool_kC/gen_0001/collect/`** (the sealed collection directory,
-  not the pool's run dir), **`--holdout-frac 0.05`**, `--device cuda`.
+  = `gen1_baked.pt`, **`--collect-dir rl-run1-volume/pool_<cell>/gen_0001/collect/`** (`<cell>` = the trained cell:
+  kC, or kB after the fallback; the sealed collection directory, not the pool's run dir), **`--holdout-frac 0.05`**,
+  `--device cuda`.
 - All fits are banked.
 - Only the final net is baked (`bake_recal.py`, then `verify`) and played.
 
