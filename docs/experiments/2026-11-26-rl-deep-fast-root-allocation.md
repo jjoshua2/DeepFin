@@ -456,7 +456,9 @@ Outputs: `~/chess-artifacts/operations/rl-deep-fast/stage1/scores/scores.json` [
 - **Report-only tail:** 28 rows with |d| > 100 cp carry +780.9 of the +765.5 cp-row total; the median per-row
   difference is −0.0009 cp. Leaving out the single largest game gives −0.138 [−1.853, +1.673]; dropping the two
   largest gives −0.578 [−2.114, +0.881]. The estimate is 0.885 cp below the threshold.
-- **Report-only secondaries (paired):** Ceres expected loss −0.0013 [−0.0028, +0.0001]; Ceres top-1 +0.0058
+- **Report-only secondaries (paired):** the Ceres secondaries use 2,422 rows (11 rows have no Ceres value), not
+  the table's 2,433. Ceres expected loss −0.0013 [−0.0028, +0.0001]; Ceres top-1 +0.0058
   [−0.0052, +0.0166]; p(best) −0.0036 [−0.0084, +0.0014]; top-1 best +0.0016 [−0.0082, +0.0113].
-- It licenses only this: W80's deep-ply policy target is not worse than R64n's by more than seed noise on deep SF
-  8M. It says nothing about the allocation or about strength; only Stage 2 tests those.
+- It licenses only this: the registered kill did not fire (estimate +0.315 cp, below +1.2; LB95 −1.50 ≤ 0); the
+  interval [−1.50, +2.25] spans zero and does not exclude a deficit larger than seed noise; tail-driven; not evidence
+  W80's target is as good or better; says nothing about allocation or strength.
