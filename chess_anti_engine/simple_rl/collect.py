@@ -528,6 +528,8 @@ _VRAM_FIT_BOARDS = 128
 _VRAM_FIT_PROCS = 3
 _VRAM_FIT_ROWS = (512, 1024, 2048)  # chunk sizes measured at the fit shape
 _VRAM_FIT_MAX_LEAF_ROWS = 8192      # largest measured leaf-buffer reservation (topk 32 x 2 x 128)
+# (topk, root full width) of the measured arms: knob off, full width at topk 16, full width at topk 32
+_VRAM_FIT_ARMS = ((16, False), (16, True), (32, True))
 _VRAM_MIB_PER_RESERVED_ROW = 0.02
 _VRAM_MIB_PER_SIM = 48.0
 _VRAM_MIB_PER_BOARD = 35.52
@@ -631,14 +633,15 @@ def _chunk_mib(forward_rows: int) -> float:
     return m1 + (m1 - m0) * (r - r1) / (r1 - r0)
 
 
-def vram_per_proc_mib(sims: int, boards: int, forward_rows: int, leaf_rows: int) -> tuple[float, list[str]]:
-    """(charged MiB of ONE collect process before the safety factor, why it is outside the fit).
-
-    Takes the forward rows directly so shapes that ``--eval-chunk-rows`` no longer allows can still
-    be checked against the model (the refit's must-refuse cases)."""
+def vram_detail(sims: int, boards: int, forward_rows: int, leaf_rows: int) -> dict[str, Any]:
+    """Every term of ONE collect process's charge (MiB, before the safety factor), and why it is
+    outside the measured fit. Takes the forward rows directly so shapes that ``--eval-chunk-rows`` no
+    longer allows can still be checked against the model (the refit's must-refuse cases)."""
     line = _VRAM_MIB_PER_SIM * int(sims) + _VRAM_MIB_PER_BOARD * int(boards)
     ratio = line / (_VRAM_MIB_PER_SIM * _VRAM_FIT_SIMS + _VRAM_MIB_PER_BOARD * _VRAM_FIT_BOARDS)
-    mib = _chunk_mib(forward_rows) * ratio + _VRAM_MIB_PER_RESERVED_ROW * max(0, int(leaf_rows) - _VRAM_FIT_MAX_LEAF_ROWS)
+    knot = _chunk_mib(forward_rows)
+    reserved = _VRAM_MIB_PER_RESERVED_ROW * max(0, int(leaf_rows) - _VRAM_FIT_MAX_LEAF_ROWS)
+    mib = knot * ratio + reserved
     if ratio < 1:
         mib = max(mib, line)
     why = []
@@ -648,18 +651,37 @@ def vram_per_proc_mib(sims: int, boards: int, forward_rows: int, leaf_rows: int)
         why.append(f"forwards of {forward_rows} rows (measured: {', '.join(map(str, _VRAM_FIT_ROWS))})")
     if int(leaf_rows) > _VRAM_FIT_MAX_LEAF_ROWS:
         why.append(f"a {leaf_rows}-row leaf buffer (measured up to {_VRAM_FIT_MAX_LEAF_ROWS})")
-    return mib, why
+    return {"knot_mib": knot, "line_mib": line, "line_ratio": ratio, "line_floor_applied": ratio < 1 and line > knot * ratio + reserved,
+            "forward_rows": int(forward_rows), "leaf_rows": int(leaf_rows), "reserved_row_mib": reserved,
+            "per_proc_mib": mib, "safety": _VRAM_SAFETY, "why": why}
+
+
+def vram_per_proc_mib(sims: int, boards: int, forward_rows: int, leaf_rows: int) -> tuple[float, list[str]]:
+    """(charged MiB of ONE collect process before the safety factor, why it is outside the fit)."""
+    d = vram_detail(sims, boards, forward_rows, leaf_rows)
+    return d["per_proc_mib"], d["why"]
+
+
+def vram_settings_detail(settings: CollectSettings) -> dict[str, Any]:
+    """``vram_detail`` at these settings, plus the K and arm checks and the total (GiB, safety included)."""
+    boards = max(1, min(int(settings.concurrency), int(settings.games)))
+    leaf_rows = realised_eval_max_batch(settings)
+    forward_rows = min(leaf_rows, realised_eval_chunk_rows(settings))
+    d = vram_detail(int(settings.sims), boards, forward_rows, leaf_rows)
+    arm = (int(settings.topk), bool(settings.root_full_width))
+    if arm not in _VRAM_FIT_ARMS:
+        d["why"].append(f"topk {arm[0]}{' full width' if arm[1] else ''} (measured arms: topk 16 off, topk 16 and 32 "
+                        "full width)")
+    if int(settings.collect_procs) != _VRAM_FIT_PROCS:
+        d["why"].append(f"--collect-procs {settings.collect_procs} (fit: {_VRAM_FIT_PROCS})")
+    d["need_gib"] = _VRAM_SAFETY * d["per_proc_mib"] * int(settings.collect_procs) / 1024.0
+    return d
 
 
 def vram_charge(settings: CollectSettings) -> tuple[float, list[str]]:
     """(conservative peak VRAM of ``collect_procs`` processes in GiB, why it is extrapolated)."""
-    boards = max(1, min(int(settings.concurrency), int(settings.games)))
-    leaf_rows = realised_eval_max_batch(settings)
-    forward_rows = min(leaf_rows, realised_eval_chunk_rows(settings))
-    mib, why = vram_per_proc_mib(int(settings.sims), boards, forward_rows, leaf_rows)
-    if int(settings.collect_procs) != _VRAM_FIT_PROCS:
-        why.append(f"--collect-procs {settings.collect_procs} (fit: {_VRAM_FIT_PROCS})")
-    return _VRAM_SAFETY * mib * int(settings.collect_procs) / 1024.0, why
+    d = vram_settings_detail(settings)
+    return d["need_gib"], d["why"]
 
 
 def vram_need_gib(settings: CollectSettings) -> float:
@@ -738,11 +760,15 @@ def check_vram(settings: CollectSettings) -> dict[str, Any] | None:
         return None
     free, total, source = _gpu_memory(settings)
     usable = min(free, VRAM_USABLE_FRACTION * total) / 2**30
-    need, why = vram_charge(settings)
+    detail = vram_settings_detail(settings)
+    need, why = detail["need_gib"], detail["why"]
     extrapolated = bool(why)
     record = {"free_gib": free / 2**30, "total_gib": total / 2**30, "usable_gib": usable, "need_gib": need,
               "collect_procs": int(settings.collect_procs), "source": source, "extrapolated": extrapolated,
-              "extrapolated_because": why}
+              "extrapolated_because": why,
+              # every term of the per-process charge (MiB, before the x safety factor), for the manifest
+              **{k: detail[k] for k in ("knot_mib", "line_mib", "line_ratio", "line_floor_applied", "forward_rows",
+                                        "leaf_rows", "reserved_row_mib", "per_proc_mib", "safety")}}
     if extrapolated:
         print(f"[simple_rl] GPU memory check: {need:.1f} GiB is EXTRAPOLATED, outside the measured chunked "
               f"fit (3 x 128 games, 64 sims, 512 / 1024 / 2048-row forwards): {'; '.join(why)}", flush=True)

@@ -581,9 +581,18 @@ size. Forward rows are min(leaf buffer, `--eval-chunk-rows`).
   itself is a floor, so the 16-sim shapes keep their measured charge: 8 × 64 fits
   and 8 × 96 is refused.
 - **`extrapolated`:** any shape outside the measured one (another K, sims, games per
-  process, a forward size between the points, or a larger leaf buffer) is marked
-  `extrapolated` in `gpu_memory_check`, with `extrapolated_because` listing why, and
-  in the log line. 4 × 128 and 3 × 192 are not measured yet.
+  process, a forward size between the points, a larger leaf buffer, or a (topk, full
+  width) arm other than topk 16 off, topk 16 full width and topk 32 full width) is
+  marked `extrapolated` in `gpu_memory_check`, with `extrapolated_because` listing why,
+  and in the log line. 4 × 128 and 3 × 192 are not measured yet. The record also
+  carries every term of the charge: `knot_mib`, `line_mib`, `line_ratio`,
+  `line_floor_applied`, `forward_rows`, `leaf_rows`, `reserved_row_mib`,
+  `per_proc_mib` and `safety`.
+- **Known limitation: the floor makes the charge non-monotone in sims.** Just below
+  64 × 128 the line floor takes over: 3 × 128 at 63 sims is charged about 24.4 GiB
+  against 8.65 at 64, and 6 × 64 at 64 sims is refused. That is the safe direction.
+  Two GPU points would replace the floor: 3 × 128 at 32 sims, N = 512, and 6 × 64 at
+  64 sims.
 - When no process count fits, the refusal says to lower `--concurrency`.
 - **The usable limit is measured:** 8 × 96 at 16 sims peaked at 31.0 GB of 32 and ran
   22% slower than 6 × 96 at 25.9 GB, which ran at full speed.
