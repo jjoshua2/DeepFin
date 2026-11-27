@@ -1202,7 +1202,7 @@ def _play_proc(spec: ProcSpec) -> dict[str, Any]:
                 target_games=len(openings), on_game_complete=on_samples, on_game_provenance=on_game,
                 fen_dole_queue=queue, pause_fn=gate, game_rng_base=seed, doled_game_indices=doled,
                 game_journal=journal.write, forced_prefixes=forced,
-                deal_fn=lambda: not stop_file.exists(), **cfg,
+                deal_fn=lambda: not stop_file.exists(), retain_samples=False, **cfg,
             )
         finally:
             pool.close()

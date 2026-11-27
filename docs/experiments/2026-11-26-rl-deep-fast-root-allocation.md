@@ -473,15 +473,16 @@ built while phase A collects. Phase A writes only run dirs, their sealed manifes
 the cost files; nothing in it fixes a choice phase B makes.
 
 Bank: `~/chess-artifacts/operations/rl-deep-fast/stage2/`, listed in its own
-`~/chess-artifacts/operations/rl-deep-fast/stage2/SHA256SUMS` [`697b4930`] (the bank's root
-`~/chess-artifacts/operations/rl-deep-fast/SHA256SUMS` [`7945de9c`] is unchanged and is verified too). Launch pin `b0541c15a` (the Stage 0 pin), worktree
-`rl-deep-fast-b0541c15a`.
+`~/chess-artifacts/operations/rl-deep-fast/stage2/SHA256SUMS` [`5bdcd64a`] (the bank's root
+`~/chess-artifacts/operations/rl-deep-fast/SHA256SUMS` [`7945de9c`] is unchanged and is verified too). Launch pin `d08b03adb` (the Stage 0 pin
+`b0541c15a` plus the collector memory fix; re-pinned after the first `collect_C` was OOM-killed, see the collector
+OOM addendum below), worktree `rl-deep-fast-d08b03adb`.
 
 **Launch condition.** Stage 0 finished (all four legs in `stage0/summary.jsonl`, `stage0/report.json` written) and
 read within the record's cost assumptions, and the coordinator wrote `stage2/PHASE_A_GO`. If Stage 0's report puts D
 outside those assumptions, phase A does not launch and the dose rule is not adjusted; the owner decides.
 
-**Steps** (`~/chess-artifacts/operations/rl-deep-fast/stage2/launch_phase_a.sh` [`7d84b7df`]), each its own process group:
+**Steps** (`~/chess-artifacts/operations/rl-deep-fast/stage2/launch_phase_a.sh` [`2df225b4`]), each its own process group:
 1. `collect_C`: stock 64 (`--sims 64 --topk 16 --full-prob 1.0`), seed 2026112701, games = round(2.8M ÷ C's Stage 0
    rows per game).
 2. `collect_D`: `--sims 80 --topk 40 --full-prob 0.25 --fast-sims 16 --root-full-width`, seed 2026112702, games =
@@ -522,7 +523,7 @@ plays the same dose and seed.
   therefore only *estimates* the K = 3 rate. It sizes D's main collect, and any error is absorbed by the registered
   top-up, sized from the main collect's own realised rate. The equal-cost check itself uses only the real collects'
   `active_seconds`, so H_C is measured, not projected. The shape is the same for both arms.
-- **Training pin (phase B):** both arms train at `b0541c15a`, one pin for collect and train, so the C-vs-D comparison
+- **Training pin (phase B):** both arms train at `b0541c15a` (re-pinned to `d08b03adb`, see the collector OOM addendum), one pin for collect and train, so the C-vs-D comparison
   uses one trainer. `kC_baked.pt` was trained at `0c795fb7a`; absolute numbers here are therefore not comparable with
   the data-volume run's.
 - **The top-up's openings:** a separate run dir starts a fresh opening permutation, so some top-up openings repeat
@@ -532,7 +533,7 @@ plays the same dose and seed.
 **Fixtures (CPU).** `~/chess-artifacts/operations/rl-deep-fast/stage2/test/dose_fixtures.py` [`ec8f2db2`]: the three dose rules, the inclusive 0.9 band, refusal of
 an incomplete clock (a resume, a kept process), no overwrite, and the scan's clean / probe / co-resident / empty
 cases. **12 of 12 pass.**
-**Harness (one unmutated pass, run when the GPU is free):** `~/chess-artifacts/operations/rl-deep-fast/stage2/test/harness_phase_a.sh` [`d9330fc8`], with a fake
+**Harness (one unmutated pass, run when the GPU is free):** `~/chess-artifacts/operations/rl-deep-fast/stage2/test/harness_phase_a.sh` [`2285a5a4`], with a fake
 HOME, a fake `nvidia-smi`, and `test/fake_collect_a.py` in place of the collect. It proves a correct run (C, D main,
 top-up, cost; doses from the report and the realised clocks; seeds and flags reaching the collect; D/C in
 [0.9, 1.1]; scans banked), a relaunch that skips every done step, and the refusals: no GO (90), `CUDA_VISIBLE_DEVICES`
@@ -544,25 +545,24 @@ step refused, unfinished moved aside, rerun). Its result is posted on the PR: **
 Phase B reads only what phase A banked (its run dirs and sealed manifests, `stage2/cost.json`,
 `stage2/cost_scan.json`, the dose files) and runs arms C and D from `kC_baked.pt` to the registered readings. Bank:
 `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/`, listed in
-`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/SHA256SUMS` [`60b9e7ba`], whose sha256 the launcher
-`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` [`120d0db5`] pins.
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/SHA256SUMS` [`f4f722c9`], whose sha256 the launcher
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` [`ca2db464`] pins.
 **Launcher change after the harness (2026-11-26).** The 13-of-13 harness pass below ran on `launch_phase_b.sh`
 `72647431`; after it, two lines were added and nothing else: a usage comment, and, right after the launch line in
 `resume.log` (past every refusal), `echo "$$" > $PB/phase_b.pid`, so the launcher records its own pid. Why: the
 launch form `setsid nohup bash … & echo $! > pid` records the wrapper's pid, which exits at once (the coordinator had
-to correct phase A's pid file by hand). **That 13-of-13 pass predates this change; the phase B harness must be rerun
-once on the final launcher, at the boundary the coordinator announces after phase A's cost step, and must pass before
-phase B launches.** The launcher is not listed in `SHA256SUMS` (it pins that file's sha256), so the operator checks
+to correct phase A's pid file by hand). That 13-of-13 pass predates this change. The phase B harness was rerun once on
+the final launcher (re-pinned, `ca2db464`) and passed 13 of 13; see the collector OOM addendum. The launcher is not listed in `SHA256SUMS` (it pins that file's sha256), so the operator checks
 it directly before launch: `sha256sum ~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh`
-must print `120d0db5d82cac32c4e514ccec47aa7547af20c3d74866a0b404573c21815244`; any other value means do not launch.
+must print `ca2db464588f393a8bfcabed19cdee27b1630f3465ca9586c28be7d6fef99dd8` (the re-pinned launcher, collector OOM
+addendum); any other value means do not launch.
 Launch: `PB=~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb; setsid nohup bash $PB/launch_phase_b.sh >
 $PB/phase_b.log 2>&1 < /dev/null &` (no `echo $!`); the pid is in `$PB/phase_b.pid` once the refusals pass. Stop:
 `kill -TERM $(cat $PB/phase_b.pid)`, then check `ps` for leftover Stockfish groups. **Phase A**: this record never
 carried phase A's launch line; the instructions sent with it used the `& echo $!` form, and the live run's
-`stage2/phase_a.pid` was corrected by the coordinator to 3116424. `launch_phase_a.sh` is pinned by the live run and
-is unchanged; any phase A relaunch records the real pid with `setsid nohup bash -c 'echo $$ > "$1/phase_a.pid"; exec
-bash "$1/launch_phase_a.sh"' _ $S2 > $S2/phase_a.log 2>&1 < /dev/null &` (`exec` keeps the pid), where
-`S2=~/chess-artifacts/operations/rl-deep-fast/stage2`. Pin `b0541c15a` for
+`stage2/phase_a.pid` was corrected by the coordinator to 3116424. The re-pinned `launch_phase_a.sh` (collector OOM
+addendum) now writes its own pid to `stage2/phase_a.pid` past its refusals, as phase B does. Pin `d08b03adb` (re-pinned
+from `b0541c15a`) for
 every step (collect, pool, train, fits, bake, play). Launch needs phase A finished (every phase-A step exited 0,
 `cost.json` and `cost_scan.json` present), `stage2/PHASE_B_GO`, and a `stage2b` release line.
 
@@ -571,7 +571,7 @@ resume rule, markers, host-RAM floors and watchdog, per-seat match resume and da
 
 | Item | Control | Phase B |
 |---|---|---|
-| Pin | `0c795fb7a` (pilot) | `b0541c15a` for everything; matches through `run_df_match.sh` (the follow-up launcher with only the commit changed) |
+| Pin | `0c795fb7a` (pilot) | `d08b03adb` (re-pinned from `b0541c15a`) for everything; matches through `run_df_match.sh` (the follow-up launcher with only the commit changed) |
 | Arms | one cell (c2x) | C and D, each from `kC_baked.pt` |
 | Pool | `pool_collect.py`, admission record | `pool_df.py`: sources = phase A's run dirs, admitted iff their step exited 0; D = `run_D` + `run_Dtopup` iff its dose > 0 (**both D run dirs reach the pool, or the tool refuses**); openings repeated across sources are kept and counted in the pool manifest (Confound 10), a repeated game id still refuses |
 | Flags | `volume_flags.sh` | `TRAIN` and `ZQ` byte-identical; each arm's collect flags = its phase-A flags with the pool's seed (2026112703, also the training seed) and games, so the trainer's own precheck accepts the pool |
@@ -594,7 +594,7 @@ missing or broken log, or any error inside the check is recorded, never raised),
 phase A registered), (3) its bank argument being the Stage 2 directory. D+O is not played by this launcher; Readout B
 reads unread with its reason until D+O's own addendum.
 
-**Deviation, stated:** the training pin is `b0541c15a`, not kC's `0c795fb7a` (phase A addendum). The fits use C's pool
+**Deviation, stated:** the training pin is `b0541c15a` (now `d08b03adb`), not kC's `0c795fb7a` (phase A addendum). The fits use C's pool
 for both arms, a choice the record did not make; it keeps the calibration data identical between the arms.
 
 **Proofs (CPU).**
@@ -606,7 +606,7 @@ for both arms, a choice the record did not make; it keeps the calibration data i
 - `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/verdicts3_v2_fixtures.py` [`d75c6520`]: v1's 23 readings plus a co-resident GPU job, a missing
   `cost_scan.json`, and a broken seat log that neither aborts nor changes Readout A and is recorded in the check.
   **27 of 27 pass.**
-- **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/harness_phase_b.sh` [`5c108831`], run when the GPU is free): a
+- **The one unmutated harness pass** (`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/harness_phase_b.sh` [`503e7e64`], run when the GPU is free): a
   fake HOME with a finished fake phase A (sealed run dirs at the pin, the real `kC_baked.pt`), a fake `nvidia-smi`,
   and `test/fake_phase_b.py` in place of the GPU and heavy steps only; the pool tool, the completion checks, the
   seat checker, `opt_check.py`, `recal_bounds.py`, the guard and `verdicts3_v2.py` are real. It proves a correct run
@@ -642,3 +642,87 @@ variance to Readout A; it is not a systematic advantage to either arm.
 - **Stopping either phase:** after any stop, check `ps` for leftover Stockfish process groups from the collect or match
   (the TERM goes to the step's process group; a grandchild that called `setsid` itself would leave it; this is the
   control's known gap) and stop only those whose command line names this bank's paths.
+
+## Collector OOM and re-pin addendum (2026-11-26)
+
+**What happened.** Phase A's first `collect_C` (pin `b0541c15a`, launched 15:08:54 EST) was killed by the kernel's
+global OOM killer: `stage2/collect_C.exit` reads `1 2026-11-26T17:16:45-05:00`, after 10,860 of its 27,955 games.
+dmesg showed three collect processes at about 32 GB anonymous memory each. The cause: in finite mode, `play_batch`
+(`selfplay/manager.py`) appended every `ReplaySample` of the call to `all_samples` and kept them until it returned
+(`selfplay/finalize.py` clears that list only in continuous mode). `simple_rl/collect.py` throws the returned list away
+(`_, batch_stats = play_batch(...)`) and takes its rows from `on_game_complete`, so every row was held twice over for
+nothing. That is about 8.9 MB per game (100 rows × 175×8×8 × 8 B). C needs 9,318 games per process, about 83 GB per
+process. D (24 rows per game, about 13k games per process) would need about 28 GB per process, so it would also have
+OOMed at three processes.
+
+**The fix** (pin commit `d08b03adbd34ffc42b679ec5f3fa7e878da3eab6`, branch `exp/rl-deep-fast-pin`, which is
+`b0541c15a` plus that one commit; the same change is in this PR for main). `play_batch` takes a new
+`retain_samples: bool = True`, and `collect.py` passes `False`. With `False`, each game's rows are dropped from
+`all_samples` once its `on_game_complete` and `on_game_provenance` callbacks have run, and are counted so that
+`BatchStats.positions` stays correct. The returned list is empty. `retain_samples=False` without `on_game_complete` is
+refused. The default is unchanged for every other caller, and game generation is unchanged.
+`tests/test_play_batch_retain_samples.py` checks that the returned list is empty, that every row reached the callback,
+and that `positions` equals the rows delivered. It checks that the rows are byte-identical to the default path at the
+same seed, in the same order (`x` and `policy_target` per row). (The suite does not test that a different seed changes
+the rows; I checked that once by hand: seeds 11 and 12 gave 30 and 28 different rows.) **The memory bound** is tested
+directly (added after review): the callback keeps only weakrefs to the rows it receives, and at every later game, after
+`gc.collect()`, every row from an earlier game whose slot has been reused is dead. The one row set allowed to survive
+is that of a finished game whose slot is not reused because the target is already dealt; it lives in that slot's own
+records until return, at most one game per slot. Mutants: (a) per-game clear removed, one clear before `return` (the
+reviewer's mutant, which passed the first three tests): the bound test fails, alive rows `[0, 6, 12, 18]`; (b) no
+clear at all: the first two tests and the bound test fail; restored, all four pass. The
+collector's other per-game structures are bounded: `pending` is popped per game in `on_game`, `buffered` is flushed at
+`rows_per_shard`, the journal is compacted at every flush, and the provenance objects are consumed per game and not
+kept.
+
+**One pin for collection and phase B training: `d08b03adb`**, worktree
+`~/projects/chess-worktrees/rl-deep-fast-d08b03adb`. Both arms collect and train at it. The bank files that named
+`b0541c15a` are re-stamped with only the pin changed: `launch_phase_a.sh`, `phaseb/launch_phase_b.sh`,
+`phaseb/run_df_match.sh`, `phaseb/move_aside_b.sh`, `phaseb/pool_df.py`, and the harnesses' fixtures.
+- `~/chess-artifacts/operations/rl-deep-fast/stage2/launch_phase_a.sh` [`2df225b4`] also writes its own pid to
+  `stage2/phase_a.pid` past its refusals. Every `DF_RSS_INTERVAL_S` seconds (default 600) of a collect, it logs one
+  `rss <step> session_total=<MiB> <pid>:<comm>:<MiB> …` line to `phase_a.log`. The line covers the collect's process
+  session (processes at or above 256 MiB are listed) and is the observation that proves the fix took effect.
+- Hashes: `~/chess-artifacts/operations/rl-deep-fast/stage2/SHA256SUMS` [`5bdcd64a`],
+  `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/SHA256SUMS` [`f4f722c9`], and
+  `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` [`ca2db464`], which pins
+  `phaseb/SHA256SUMS`.
+
+**`collect_C` restarts whole, under the new pin, with the same seed (2026112701) and the same dose (27,955 games, from
+the kept `collect_C.dose.json`).** The collect's `plan.json` code check refuses to resume a run dir written at another
+commit, so a resume is not possible. `clear_phase_a.sh collect_C` moves the partial `run_C` and its markers into
+`stage2/aborted_*`. Nothing is deleted. That partial run is a duplicate prefix of the rerun (same seed, same doled
+openings, same code path for game generation) and **must never be admitted alongside it**. `pool_df.py` reads only
+`run_C`, `run_D` and `run_Dtopup`, never `aborted_*`.
+
+**Harness on the final launchers** (fake HOME, fake `nvidia-smi`, the guard's `CUDA_VISIBLE_DEVICES` refusal tested as
+before; GPU idle; no mutant series): phase A **11 of 11 pass**
+(`~/chess-artifacts/operations/rl-deep-fast/stage2/test/harness_phase_a.repin.out` [`e8767a56`]) and phase B **13 of 13 pass**
+(`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/test/harness_phase_b.repin.out` [`c49930ef`]), on `launch_phase_a.sh` `2df225b4` and
+`launch_phase_b.sh` `ca2db464` at pin `d08b03adb`. Two earlier attempts were refused by the guard (exit 8, in every
+step that guards) because a CPU-only pytest held `/dev/dxg` beside them: first my own test run, then another
+session's. That is the guard behaviour described in the confound below.
+
+**Confound (first attempt only).** A CPU-only test audit (pytest, 2 threads, `CUDA_VISIBLE_DEVICES` empty) ran beside
+the first `collect_C` from 15:57 to 17:16. `gpu_holders.py` listed its pids as foreign holders in 302 of 509 samples
+(at most 121 consecutive), so that attempt's scan is not clean. It is aborted and never pooled, so no reading uses it.
+**Would the phase A/B guards hold on such pids? Yes.** The pinned `gpu_scan.sh` exempts a process whose
+`CUDA_VISIBLE_DEVICES` is empty only from its argv-name clause. Its fd clause refuses any process of this user that
+holds the `/dev/dxg` device, whatever its environment, and torch's CUDA probe opens `/dev/dxg` even with CUDA hidden.
+A step's first guard therefore refuses at once (exit 8). The between-step re-guard waits up to `DF_REGUARD_WAIT_S`
+(900 s) and then refuses. The harness rerun above hit exactly this. A long CPU test suite beside the collect therefore
+halts phase A at its next step boundary: it does not corrupt the run, it stops it. Run such audits in a pause window or
+between phases.
+
+**Deviation (coordinator, disclosed):** phase A was relaunched at 18:02:07 EST on the reviewed pin `d08b03adb`
+before this PR merged (`stage2/resume.log`: launch pid 3334645, launcher sha256 `2df225b4…`). The partial first
+attempt was moved by `clear_phase_a.sh` to `stage2/aborted_20261126T180159.Kbix` at 18:01:59. The fix code and the pin were approved in review; only this PR's test and record text were still
+open. **Take-effect proof for the fix:** in `stage2/phase_a.log`, the `rss collect_C session_total=…` line, logged every
+600 s, stays flat over the collect. Before the fix, each process grew by about 8.9 MB per game, to about 32 GB at 3,620
+games per process.
+
+**Launch** (as run by the coordinator; the commands for any later relaunch):
+`S2=~/chess-artifacts/operations/rl-deep-fast/stage2; bash $S2/clear_phase_a.sh collect_C`, then
+`setsid nohup bash $S2/launch_phase_a.sh >> $S2/phase_a.log 2>&1 < /dev/null &`
+(no `echo $!`; the launcher writes `$S2/phase_a.pid`). Stop: `kill -TERM $(cat $S2/phase_a.pid)`, then check `ps` for
+leftover Stockfish groups.

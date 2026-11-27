@@ -242,8 +242,14 @@ def _finalize_completed_slots(
     recycle: bool = True,
     on_game_provenance: Callable[[GameProvenance], None] | None = None,
     game_starts: list[GameStartProvenance] | None = None,
+    released_rows: list[int] | None = None,
 ) -> None:
     """Finalize done-but-not-yet-finalized games; recycle slots while target allows.
+
+    ``released_rows`` (finite mode with ``retain_samples=False``): after each
+    game's callbacks have run, its rows are dropped from ``all_samples`` and
+    their count added to ``released_rows[0]``, so the call holds only in-flight
+    games instead of every sample it ever produced.
 
     ``recycle=False`` is the STOP teardown: finished games are still finalized
     and delivered exactly as in the running loop, but their slots are NOT
@@ -267,6 +273,9 @@ def _finalize_completed_slots(
                     state, i, all_samples, on_game_complete,
                     on_game_provenance=on_game_provenance, game_start=game_starts[i],
                 )
+            if released_rows is not None:
+                released_rows[0] += len(all_samples)
+                all_samples.clear()
             state.finalized_arr[i] = 1
             state.games_completed += 1
             deal = getattr(state, "deal_fn", None)  # absent from lightweight state doubles
@@ -370,6 +379,7 @@ def play_batch(
     game_journal: Callable[[list[dict[str, Any]]], None] | None = None,
     forced_prefixes: Mapping[int, Sequence[Mapping[str, Any]]] | None = None,
     deal_fn: Callable[[], bool] | None = None,
+    retain_samples: bool = True,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -385,6 +395,13 @@ def play_batch(
 
     Finite mode (target_games > 0 or stop_fn is None): plays exactly
     target_games (or `games` if target_games=0) then returns all samples.
+
+    ``retain_samples=False`` (finite mode, requires ``on_game_complete``): each
+    game's rows are delivered through the callback and then dropped, so memory
+    holds in-flight games only; the returned list is empty and
+    ``BatchStats.positions`` still counts every row produced. Game generation is
+    unchanged (same RNG draws, same rows). The default keeps every row for the
+    whole call, about 9 MB per 100-row game -- a long collect OOMed on it.
 
     ``on_game_provenance`` is finite-only, opt-in observation of EVERY completed
     game, including games with zero retained samples. Its frozen payload carries
@@ -538,6 +555,9 @@ def play_batch(
             on_state_ready(state)
 
         all_samples: list[ReplaySample] = []
+        if not retain_samples and on_game_complete is None:
+            raise ValueError("retain_samples=False needs on_game_complete: the rows would be lost")
+        released_rows: list[int] | None = None if retain_samples else [0]
 
         # Continuous mode: stop_fn controls exit.  Finite mode: safety bound
         # lets us abort if something goes sideways and no game ever finalizes.
@@ -574,6 +594,7 @@ def play_batch(
                     all_samples=all_samples,
                     on_game_complete=on_game_complete,
                     on_game_provenance=on_game_provenance, game_starts=game_starts,
+                    released_rows=released_rows,
                     batch_size=batch_size,
                     continuous=continuous,
                     target=target,
@@ -702,6 +723,7 @@ def play_batch(
                     state, all_samples=all_samples,
                     on_game_complete=on_game_complete,
                     on_game_provenance=on_game_provenance, game_starts=game_starts,
+                    released_rows=released_rows,
                     batch_size=batch_size, continuous=continuous, target=target,
                     defer_pending_labels=continuous,
                 )
@@ -724,6 +746,7 @@ def play_batch(
                 state, all_samples=all_samples,
                 on_game_complete=on_game_complete,
                 on_game_provenance=on_game_provenance, game_starts=game_starts,
+                released_rows=released_rows,
                 batch_size=batch_size, continuous=continuous, target=target,
                 defer_pending_labels=continuous,
             )
@@ -782,7 +805,7 @@ def play_batch(
         sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)
         return all_samples, state.stats.to_batch_stats(
             games=state.games_completed,
-            positions=len(all_samples),
+            positions=len(all_samples) + (released_rows[0] if released_rows is not None else 0),
             sf_nodes=sf_nodes if sf_nodes > 0 else None,
         )
     finally:
