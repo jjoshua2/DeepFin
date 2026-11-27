@@ -20,6 +20,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 ## Records
 
+- [2026-11-22: Input and encoding refresh](2026-11-22-input-encoding-refresh.md) — historical feature verdicts corrected for seed noise; prospective A39 175-plane reliance/geometry screen, then matched compact-input and typed source-target relation training controls; first instrument only, no new A39 measurement or strength claim.
+
 - [2026-11-22: Transposition reuse and exploration accounting — direction and first diagnostic](2026-11-22-transposition-exploration-direction.md) — prior C17/DAG/cache/PUCT evidence; opt-in exact post-search cached-board census and frozen-history CPU replay; distinguishes structural boards, search contexts and reconstructed inputs. Production overlap/request accounting pending; no learned-count adoption or strength claim.
 
 - [2026-11-22: RL run 1, generation 2 — results](2026-11-22-rl-run1-gen2-results.md) — complete. Stage 0 +4.94 [−1.62, +11.50], adoptable without replication. Generation 2 vs baked generation 1 +1.14 [−5.04, +7.32] and vs the SL base +3.85 [−2.46, +10.17], each 6,400 games and adoptable. Registered claim: **no second measured step**.
