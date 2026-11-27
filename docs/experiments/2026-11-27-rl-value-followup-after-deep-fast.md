@@ -574,3 +574,43 @@ No mutant series, per the owner's rule.
   not a defect.
 - **Wall times** beyond the measured basis above.
 - **Which group holds `value_wdl.*` on the real net** (the Step 3 pre-launch one-liner).
+
+## Step 1 verdict (read 2026-11-27)
+
+Step 1 exited 0 at 18:21:24 EST (`step1/exit` newer than `step1.pid`; launched 15:54:07, launcher `aab7bec6`);
+every step exit reads 0 and `STEP1_DONE` exists. Read once by the registered rule from
+`~/chess-artifacts/operations/rl-value-followup/step1/contrast64_look1.json` [`10513cd2`]. Each arm is kC's policy with
+that net's value head, against `kC_baked.pt`, 3,200 games (1,600 per seat, 800 opening pairs per seat), seed
+2026112721.
+
+| Reading | 64 sims (decides), Elo [95% CI] | 16 sims (reported only) |
+|---|---|---|
+| hC: C_baked's value on kC's policy, vs kC | −3.69 [−12.12, +4.74] | −7.49 [−17.18, +2.19] |
+| hD: D_baked's value on kC's policy, vs kC | −0.98 [−9.23, +7.27] | +2.71 [−7.16, +12.59] |
+| **Δ = E_D − E_C**, paired by opening | **+2.71 [−8.92, +14.35]** | +10.21 [−2.93, +23.34] |
+
+**Registered verdict: |Δ| < 5 and neither arm's own E in the extend band, so Step 1 stops at look 1: not resolved
+at 3,200 games.** The bank's label strings predate the wording fix and read "no C-vs-D value difference at screen
+resolution" / "no value gain at screen resolution"; per this record's review note they mean "not resolved", and the
+interval is the result. Look 2 was not played. The 16-sim file is
+`~/chess-artifacts/operations/rl-value-followup/step1/contrast16.json` [`d1e448c5`].
+
+**What this licenses.**
+
+- No claim that the deep/fast value head differs from the stock one, in either direction. The paired contrast at
+  this size detects about 17 Elo (power table above); the interval excludes a D value advantage above +14.4 and a C
+  advantage above +8.9. Realised arm-control correlation: +0.028 at 64 sims, +0.098 at 16.
+- Neither value head, placed on the parent's policy, is shown to gain or to lose against the parent.
+- Descriptive only: the full nets read C −5.81 and D −3.34 against the same parent at 12,800 games, and the
+  head-swap points are −3.69 and −0.98. The points are compatible with the value head carrying most of each net's
+  deficit and with it carrying none; this step cannot separate them. The full-net and head-swap readings used
+  different opening sets (seed 2026112711 and 2026112721), so the four points are not paired.
+- Descriptive only: D − C is positive in the full-net match (+2.5), here at 64 sims (+2.7) and at 16 sims (+10.2).
+  None is resolved; the three share the same two nets and the two head-swap readings share openings, so this is
+  not three independent replications, and the 16-sim reading decides nothing.
+
+hC's banked games are Step 2's control. Step 2 was launched at 18:23:08 EST (pid in `step2/step2.pid`, launcher
+`1a00398c`). Measured before it: all 2,785,627 rows of pool_C carry a stored search WDL (`has_search_wdl`, 141
+shards, read on the CPU), so the search-only arm's effective search share is 1.0 and the outcome-fallback confound
+is empty (the trainer sets the dampen knobs, `wdl_terminal_outcome_plies` and `sf_wdl_frac` to 0 at the pin,
+`simple_rl/learn.py:1078-1081`, so no taper moves search weight to the outcome).
