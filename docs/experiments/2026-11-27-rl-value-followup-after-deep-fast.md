@@ -299,3 +299,278 @@ reported as unresolved. The reviewer settled two items the author could not chec
 `d08b03adb`: result rows carry `candidate_value` / `reference_value` for a hybrid seat (`scripts/arena_standard.py`),
 and `arena_seat_balanced_pool.py` accepts an arm whose policy file is the parent's.
 
+
+## Steps 2–3 launch addendum (2026-11-27)
+
+The launchers for Steps 2 and 3 were written while Step 1 runs. Nothing below has been launched.
+- **Step 2** launches after `step1/STEP1_DONE` exists, this addendum is reviewed and merged, `step2/STEP2_GO` is written
+  and a `vstep2 idle_mib=<MiB> <ISO time>` line is in the bank's `GPU_RELEASED_BY_OPERATOR`.
+- **Step 3** launches after `step2/STEP2_DONE` and `step2/winner.txt` exist, plus `step3/STEP3_GO` and a `vstep3` line.
+
+### Files
+
+Step 1's `SHA256SUMS` and every file it pins are unchanged (byte for byte; its launcher pins that file by hash). The
+Steps 2–3 files are listed in their own `~/chess-artifacts/operations/rl-value-followup/SHA256SUMS.step23` [`e0ed8638`],
+which both launchers pin by hash, together with the guard's hash. It lists:
+- **`common23/lib23.sh`**: the shared step machinery, the train / opt-check / fits / bounds / bake sequence of phase B's
+  `stage2b_lib.sh`, and Step 1's seat / match / read pattern.
+- **Copied byte for byte** from phase B's bank: `common23/bake_recal.py` [`786bb537`], `common23/recal_bounds.py`
+  [`1a50be12`], `common23/planned_updates.py` [`208995af`].
+- **Derived, each change stated in its header:**
+  - `common23/opt_check_v.py`: phase B's `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/opt_check.py` [`4f8b306f`] with three changes. (1) The realised search-WDL
+    fraction is an argument (0.0 / 1.0 / 0.5) instead of the fixed 0.5. (2) The matrix multiplier is an argument
+    (`ckpt` keeps the original expression; a number gives base0 = lr × MULT). A new check requires base0 within 1e-6
+    of 6e-5. (3) `lr_floor`, `peak_lr` and `lr_schedule.eta_min` / `group_eta_min` (the scheduler's floor,
+    `simple_rl/learn.py` `realised_optimizer`) leave the non-LR comparison. A positive check then requires
+    `eta_min` = the arm's `--lr-floor` and `group_eta_min` null. (Review fix on #1553: the first version left
+    `eta_min` in, so Step 3's two arms, whose floors differ by design, would have failed the comparison on a correct run.)
+  - `common23/train_smoke_v.py`: phase B's `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/train_mem_smoke.py` [`2ce38774`] with one change: every update's record also
+    carries each optimizer group's realised lr.
+  - `common23/run_v2_match.sh`: Step 1's `run_v_match.sh` with 1 sim also registered.
+  - `common23/gpu_guard_v23.sh`: Step 1's guard with stages `vstep2` / `vstep3`. It uses the same bank lock and the same
+    read-only deep/fast lock.
+  - `common23/contrast_v2.py`: named arms against a control. It imports Step 1's `contrast_v.py` (estimator unchanged).
+    It also refuses, after the #1553 review:
+    - any run of a look whose header settings differ from the look's other runs, apart from net paths;
+    - any run whose results row puts the arm on the wrong side. In the A run the arm must be the candidate and
+      `kC_baked.pt` the reference; in the B run, the reverse. A head-swap arm's side carries its value block.
+    It reports the realised arm-control correlation.
+- **Step 1's own files, read through their pinned bytes:** `seat_state_v.py`, `contrast_v.py`, `gpu_scan.sh`.
+
+Phase B's `stage2_flags.sh` (`043b4810…`), `plan_C.json` and `pool_C` manifest are read in place, pinned by sha256 in
+the launchers, never copied or written. So are `kC_baked.pt`, `C_baked.pt` and `scripts/fit_value_recal.py` at the pin
+(`37e27420…`).
+
+**Why opt_check and the smoke are derived rather than copied.** Copied unchanged, phase B's `opt_check.py` would fail
+every Step 2 arm: it requires a search fraction of 0.5. It would also fail every Step 3 arm: it expects
+base0 = lr × 20 and compares `lr_floor` as a non-LR field. And phase B's smoke does not record the per-group lr that
+Step 3's void rule reads. `opt_check_v.py` with `0.5 ckpt` reproduces phase B's verdict on phase B's own C and D train
+dirs (all seven checks true, `ok` true). With `0.0` it fails them, as it must.
+
+### What each launcher runs
+
+| Launcher | sha256 |
+|---|---|
+| `~/chess-artifacts/operations/rl-value-followup/step2/launch_step2.sh` [`1a00398c`] | `1a00398c8ac202973179e8e1e78d1076edae97fb6f5d8e13b6d25dc0055db5fb` |
+| `~/chess-artifacts/operations/rl-value-followup/step3/launch_step3.sh` [`5ffac6f0`] | `5ffac6f0494714e9327a1e01b467ab2e1281711ce5214e2b79eb781b9cb137b9` |
+
+**Training.** Each arm trains from `kC_baked.pt` at pin `d08b03adb` with:
+- `--collect-from` phase B's `pool_C` (read only);
+- phase B's collect flags (arm C, seed 2026112703, the pool's games);
+- phase B's `TRAIN`, then the arm's flags (a later flag wins);
+- `--snapshot-updates 2587,5174` (phase B's `plan_C.json`).
+
+The arms:
+
+| Step | Arm | Flags |
+|---|---|---|
+| 2 | `O` | `--value-outcome-weight 1 --value-search-weight 0 --value-search-source stored_search_wdl` |
+| 2 | `S` | `0 / 1`, same source |
+| 3 | `L1` | the Step 2 winner's value mix + `--lr 1e-5 --lr-floor 1e-5 --matrix-lr-multiplier 6` |
+| 3 | `L3` | the Step 2 winner's value mix + `--lr 3e-5 --lr-floor 3e-5 --matrix-lr-multiplier 2` |
+
+For Step 3, `step2/winner.txt` names the winner: `O`, `S`, or none, in which case the mix is the 0.5 / 0.5 blend.
+
+Per arm, in order:
+1. **The 3-update GPU memory smoke**, with the arm's exact flags. ABORT above 0.85 × device memory writes `HOLD_MEM`.
+   Then the **realised-lr check after update 1**: group 0 within 1e-6 (relative) of 6e-5, and groups 1–3 at the arm's
+   `--lr`. A miss writes `HOLD_LR_<arm>`, exits non-zero, and the arm is **void**: it is not trained and plays no
+   match. In Step 2 the same check confirms phase B's optimizer: 6e-5 and 3e-6.
+2. **Training** (host-RAM floor 86 GiB, phase B's floor for this pool), then the planned-updates check: realised =
+   planned = 5,174, snapshots as registered.
+3. **`opt_check_v.py`, right after that arm trains and before the next arm trains.** The non-LR reference is phase B's
+   `arm_C` train dir (its `metrics.json` is pinned by sha256 in the launchers). The realised search fraction must be the
+   arm's, base0 must be 6e-5, and `eta_min` must be the arm's floor. A failure writes `HOLD_TRAIN_CHECK` before the
+   second arm spends GPU time. (The first version compared the two arms with each other, so it could only fail after
+   both had trained.)
+4. **Phase B's fits** on C's pool collect against `kC_baked.pt`: snapshots 2587 and 5174, plus the final net.
+5. **Phase B's bounds** (`recal_bounds.py`: R1 box and R2). A miss writes `HOLD_RECAL_<arm>`; the owner decides.
+6. **Phase B's bake and verify.**
+
+**Readings.** These are Step 1's settings at the pin. Seeds: look 1 2026112721, look 2 2026112722.
+- A 4-game-per-seat smoke per arm.
+- **Head-swap** (`kC` policy + the arm's baked value vs `kC_baked.pt`): 1,600 games per seat (3,200 per arm) at 64
+  sims; 4,800 more per seat at look 2 if the rule extends; 1,600 per seat at 16 sims.
+- **Each arm's own full net vs `kC_baked.pt`** at 64, 16 and 1 sims, 1,600 per seat each. These are reported only.
+
+**The control's games are read, never replayed.**
+- Step 2's control is Step 1's `hC` (`step1/arenas/hC64`, `hC16`).
+- Step 3's control is the Step 2 winner's head-swap (`step2/arenas/h<O|S>64`, `h<O|S>16`), or `hC` when Step 2 has no
+  winner.
+- If the rule extends and no step has played the control's look 2 (seed 2026112722, 4,800 per seat), the extending step
+  plays it once, as step `c64_2`, into its own directory. That is a new reading, not a replay. Every later step reads
+  it from there.
+
+### The deciding yardstick and the rule (Steps 2 and 3)
+
+**Yardstick:** step `read64_1` runs, for Step 2 (full paths; `B=~/chess-artifacts/operations/rl-value-followup`):
+`python3 $B/common23/contrast_v2.py 64 --out $B/step2/contrast64_looks1.json --base ~/chess-artifacts/operations/rl-run1-volume/kC_baked.pt --control C --look 2026112721 C=$B/step1/arenas/hC64/hC64_1_A.games.jsonl,$B/step1/arenas/hC64/hC64_1_B.games.jsonl O=$B/step2/arenas/hO64/hO64_1_A.games.jsonl,$B/step2/arenas/hO64/hO64_1_B.games.jsonl S=$B/step2/arenas/hS64/hS64_1_A.games.jsonl,$B/step2/arenas/hS64/hS64_1_B.games.jsonl`.
+Step 3 is the same with `step3`, arms `L1` and `L3`, and the control named above.
+
+For each arm X, Δ_X = E_X − E_control. It is paired by opening key, uses Step 1's seat-balanced estimator unchanged,
+has a clustered SE, and is reported in Elo through the slope at 0.5 with a 95 % interval. Each arm's own E vs kC is
+reported beside it, and so is the realised arm-control correlation (phase B's C-vs-D pairing: +0.046).
+
+**Rule** (`contrast_v2.py` `rule()`), per arm:
+
+| Reading | Look 1 (3,200 games per arm) | Final (12,800 per arm) |
+|---|---|---|
+| Δ_X | \|Δ\| < 5: stop; "not resolved at 3,200 games; quote the interval". Δ ≥ +15 with LB > 0: better than the control. Δ ≤ −15 with UB < 0: worse. Anything else (\|Δ\| in [5, 15), or \|Δ\| ≥ 15 with an interval that includes 0): extend. | LB > 0: better. UB < 0: worse. Otherwise: "not resolved at 12,800 games; quote the interval". |
+| Own E vs kC | ≥ +15 with LB > 0: gain. ≤ −15 with UB < 0: loss. Any other E ≥ +5, including ≥ +15 with LB ≤ 0: extend. Otherwise: "not resolved at 3,200 games; quote the interval". | LB > 0 gain / UB < 0 loss, else "not resolved at 12,800 games". |
+
+The labels are stopping labels, not findings of no effect. At 3,200 games the paired Δ cannot exclude about 17 Elo (see
+the power table), and every readout quotes the interval. **This extension rule supersedes the Step 2 design text's
+"extension to 12,800 only from [+5, +15]".**
+
+- **Extension is all or nothing:** if look 1 extends anything, every arm and the control get look 2, and the final
+  reading pools both looks.
+- **Winner:** among arms whose final Δ says "better than the control", the one with the largest Δ. Otherwise "none (the
+  control stays)". It is written to `step<N>/winner.txt`.
+- The 16-sim and full-net readings decide nothing.
+
+**Power of the paired contrast.** Measured on phase B's logs, subsampled to 800 pairs per seat for 3,200 games, with
+arm-control ρ = +0.05 (from the statistics review of #1553):
+
+| Games per arm | Per-arm half-width | Paired Δ half-width | MDE at 80 % power, two-sided 5 % |
+|---|---|---|---|
+| 3,200 | ±8.5 Elo | ±11.7 Elo | ≈ 17 Elo |
+| 12,800 | ±4.3 Elo | ±5.9 Elo | ≈ 8.5 Elo |
+
+The head-swap arms share kC's policy, so ρ may be higher and the band narrower. Each readout reports the realised ρ.
+
+**Selection.** Two arms and up to two looks. Under the global null (no arm differs from the control), simulation in the
+review gives:
+- a family-wise false-winner rate of about 3–5 %;
+- a false winner's reported Δ averaging +7 to +8 Elo;
+- a winner's Δ that is biased upward in general: one arm truly +8 wins 69 % of the time with a reported +9.7.
+
+A Step 2 or Step 3 winner's Δ is quoted with that caveat.
+
+### Confounds (Steps 2–3)
+
+- **Step 3's control is a selected arm's banked games.** The Step 2 winner was chosen because its Δ against hC was
+  high, so its banked E carries positive noise. Step 3's Δ = E_L − E_winner is biased low:
+  - by about +3.8 Elo if the winner's true Δ is 0;
+  - by about +0.7 at a true +8;
+  - by about 0 at a true +15.
+
+  A Step 3 "better than the control" stays conservative. **A Step 3 "worse than the control" is anti-conservative and
+  is NOT read as "a higher learning rate harms".** Each Step 3 readout quotes the control's E beside its Step 2 value.
+  The bias-free alternative would replay the control at a fresh seed pair, about 0.95 h per look; it is not
+  registered.
+- **S (search only) falls back to the outcome target** on any row without a stored search WDL
+  (`train/value_blend_guard.py` `search_effective_frac`). The trainer logs that share but does not record it in
+  `metrics.json`. Each Step 2 readout therefore reports pool_C's effective search share per arm: the share of drawn
+  rows carrying a stored search WDL, computed on the CPU from pool_C's shards. It is not measured yet.
+- **Step 3's lr also moves the policy heads** (groups 2/3). That cannot reach the head-swap reading, where the policy
+  is kC's, but it does reach the full-net readings.
+- **The hC control games were played earlier**, in Step 1, on the same pin, settings and seeds. The same holds for a
+  Step 2 winner's games used by Step 3.
+
+### Interpreter override
+
+The launchers read `VF_PY` (interpreter) and `VF_TEST_MEMINFO` (meminfo path) for the harness only. **Both must be
+unset at a real launch.** The launchers refuse with 82 if either is set and the bank has no `HARNESS_FAKE_HOME` marker.
+Only the harness's fake bank carries that marker.
+
+### GPU-hours
+
+Measured basis:
+
+| Item | Time |
+|---|---|
+| Phase B smoke | 5.5 min |
+| Phase B `train_C` | 33 min |
+| Phase B fits, both arms | 31 min |
+| Phase B bake | 3 min |
+| Step 1's live hybrid at 64 sims | ≈ 3,370 games/h, so 3,200 games ≈ 0.95 h, 1.5× a plain arm |
+
+Per step (two arms):
+
+| Item | Estimate |
+|---|---|
+| Smokes | 0.2 h |
+| Training | 1.1 h |
+| Fits and bake | 0.6 h |
+| Hybrid 64, look 1 | 1.9 h |
+| Hybrid 16 | ≈ 0.6 h (estimate) |
+| Full nets at 64 / 16 / 1 sims | ≈ 1.8 h |
+| **Total per step** | **≈ 6.2 h** |
+| Extension: two arms' look 2, plus the control's if missing (3 × 9,600 hybrid games) | up to ≈ 8.6 h more |
+
+### Launch and stop
+
+**Step 2:**
+1. `sha256sum ~/chess-artifacts/operations/rl-value-followup/step2/launch_step2.sh` must print the value above.
+2. `V=~/chess-artifacts/operations/rl-value-followup/step2; setsid nohup bash $V/launch_step2.sh >> $V/step2.log 2>&1 < /dev/null &`
+3. Stop: `kill -TERM $(cat $V/step2.pid)`, then check `ps` for leftover arena or trainer processes whose command line
+   names this bank.
+
+Step 3 is the same with `step3`.
+
+A relaunch skips every step whose exit reads 0, and every DONE seat. A failed match step reruns with its DONE seats
+skipped and never re-rolled. A PARTIAL seat (87), a STALE seat (86), or any `HOLD_*` / `STOP` file (81) stops the
+launcher for the owner.
+
+### Harness
+
+**`~/chess-artifacts/operations/rl-value-followup/step2/test/harness_step23.sh` [`2695d3e0`]: 25 of 25 pass**
+(`~/chess-artifacts/operations/rl-value-followup/step2/test/harness_step23.out` [`67ad9ea8`]).
+
+**The review blocker reproduced, then fixed.** The fake trainer now writes `lr_schedule.eta_min` = the run's floor. With
+the old `opt_check_v.py` the harness failed 17 of 21: Step 3 `HOLD_TRAIN_CHECK`, `non_lr_fields_equal_reference`
+false (`~/chess-artifacts/operations/rl-value-followup/step2/test/harness_step23.old_strip.out` [`0d43e896`], run on
+the previous launcher structure). With the fix it passes.
+
+Setup:
+- Fake HOME with a copy of the bank, and a fake finished Step 1 (hC at 64 and 16 sims, played through the real
+  `run_v2_match.sh`).
+- Read-only symlinks to phase B's flags, plan, pool manifest and `C_baked.pt`, to `kC_baked.pt`, and to the pin
+  worktree.
+- A stub interpreter that runs the stdlib tools for real (`contrast_v2.py`, `contrast_v.py`, `seat_state_v.py`,
+  `recal_bounds.py`, `opt_check_v.py`, and every inline python of the launchers) and
+  `~/chess-artifacts/operations/rl-value-followup/step2/test/fake23.py` [`aacf683b`] in place of each torch call:
+  smoke, trainer, plan, fit, bake, arena.
+- The fake trainer writes phase B's real `arm_C` `metrics.json` / `manifest.json` with these fields set from the run's
+  flags: settings `lr`, `lr_floor`, `value_outcome_weight` / `value_search_weight`; `realised_optimizer` `base_lrs`,
+  `param_group_lr`, every table `lr`, `lr_floor`, `peak_lr`, `lr_schedule.eta_min`; summary
+  `realised_lr_param_groups`, `realised_search_wdl_frac`, `snapshot_updates`. Every other field is phase B's.
+- The fake arena biases scores for the sides whose net name carries a registered bias, so the rule has something to
+  decide.
+- No torch; `CUDA_VISIBLE_DEVICES` is empty for every python.
+- **One stated difference from a real launch:** the fake bank's guard is a stub, and the copy's two pinned constants
+  are rewritten to the stub's hashes. The real guard's scan would refuse while Step 1's arena holds the GPU.
+
+What it proves:
+- **Step 2 refusals:** no GO (90), `CUDA_VISIBLE_DEVICES` empty (94), Step 1 not done (91), a tampered `common23`
+  file (93), a HOLD file (81), a test-only variable (82), `VF_PY` set outside the harness (82).
+- **`contrast_v2.py` hardening:** the registered control and arm are accepted; a control whose header settings differ
+  (temperature) is refused; a seat-swapped control (B passed as A) is refused.
+- **A full Step 2 pass:**
+  - `hC` look 1 is read, not replayed.
+  - Look 1 extended, so the control's look 2 was played once in `step2` and the final reading pooled both looks.
+  - Realised search fractions are 0.0 / 1.0, and both opt checks are ok.
+  - Full nets are read at 64 / 16 / 1 sims; the winner file, the pid file and the exit marker are written.
+- **A Step 2 relaunch** that trains and plays nothing.
+- **Step 3:** no GO (90); Step 2 not done (91).
+- **The void:** group 0 at 1.1 × 6e-5 after update 1 gives a non-zero exit, `HOLD_LR_L1`, no train dir and no
+  arena.
+- **A full Step 3 pass:** the control is the Step 2 winner's reading, read not replayed. Realised lr is L1 group 0
+  6e-5 / groups 1–3 1e-5, and L3 6e-5 / 3e-5; opt checks are ok.
+- **A Step 3 relaunch** that plays nothing.
+
+No mutant series, per the owner's rule.
+
+### Not verified without torch (stated plainly)
+
+- **The real trainer's realised per-group lr with `--matrix-lr-multiplier 6` / `2`** on top of
+  `--optimizer-hparams-source init-checkpoint`. The code reads "explicitly set knobs win" (`simple_rl/learn.py`
+  `resolve_optimizer_hparams`), so group 0 should be 1e-5 × 6 and 3e-5 × 2. The void rule catches it at update 1 if
+  not.
+- **That `trainer.opt.param_groups[i]["lr"]` after one `train_steps` call is the realised lr.** `train_smoke_v.py`
+  records it; only the stand-in was run.
+- **Whether the outcome-only and search-only arms' recalibration falls inside phase B's R1 box.** The box was fitted
+  on blend nets; an arm outside it writes `HOLD_RECAL_<arm>` and stops for the owner. That is the registered behaviour,
+  not a defect.
+- **Wall times** beyond the measured basis above.
+- **Which group holds `value_wdl.*` on the real net** (the Step 3 pre-launch one-liner).
