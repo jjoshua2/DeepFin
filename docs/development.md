@@ -69,6 +69,26 @@ python scripts/validate.py capped               # worker tests preserve the loca
 python scripts/validate.py lint                 # same whole-repo gate as CI
 ```
 
+`scripts/lint.sh` gives CI's result only from CI's environment: basedpyright reads
+the installed packages' types, and a different torch or numpy both adds findings and
+hides real ones. To lint a worktree exactly as CI does, without touching any shared
+environment:
+
+```bash
+# once per machine (and after uv.lock changes): the locked lint environment, outside every checkout
+UV_PROJECT_ENVIRONMENT="$LINT_VENV_DIR" uv sync --locked --extra dev --extra cpu --no-install-project
+# once per worktree (and after .c/.h changes): basedpyright cannot resolve an unbuilt extension
+"$LINT_VENV_DIR/bin/python" setup.py build_ext --inplace
+CAE_LINT_VENV="$LINT_VENV_DIR" ./scripts/lint.sh        # bare: whole repo, judge by exit code
+```
+
+`LINT_VENV_DIR` is any directory outside the checkout. With `CAE_LINT_VENV` set,
+`lint.sh` takes ruff, basedpyright and vulture from that environment and points
+basedpyright at its interpreter; unset, it uses the checkout's `.venv`, else `PATH`.
+Its first line states the interpreter and torch version it used, and it warns when
+that torch is not the one `pyproject.toml` pins. The extensions built this way carry
+the lint interpreter's ABI tag and sit beside any built for the test interpreter.
+
 `tests/conftest.py` caps torch at two threads by default. The terminal summary reports
 the regime, including under `-q`. Use `CAE_TEST_THREADS=auto` only on a dedicated
 runner or during a confirmed pause with no competing work; an explicit thread count
