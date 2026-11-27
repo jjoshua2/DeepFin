@@ -323,3 +323,59 @@ def test_played_move_is_the_sampled_move_and_replays_to_the_next_row(
         differing += int(played[i] != survivor[i])
     assert checked > 20
     assert differing >= 3  # the replay check covers rows where played != survivor
+
+
+def test_collected_wdl_target_is_the_game_result_from_each_rows_side_to_move(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every other simple_rl fixture writes a RANDOM ``wdl_target``, so nothing
+    tied the stored label to the game that produced it (test audit,
+    2026-11-26). Four openings one move from a forced-or-obvious mate give
+    decisive games both ways; each stored row is then checked against
+    ``games.jsonl`` by replaying the game to the row's ply: 0 = the side to
+    move went on to win, 2 = it lost, 1 = draw."""
+    import chess
+
+    monkeypatch.setattr(collect_mod, "_open_stockfish", lambda _s: QuietStockfish([0.0, 1.0, 0.0]))
+    ckpt = save_tiny_checkpoint(tmp_path / "model.pt", seed=5)
+    start = chess.STARTING_FEN
+    king_hunt = chess.Board("8/8/8/8/8/4q1k1/P7/7K b - - 0 1")
+    lines = [
+        f"{king_hunt.fen()} | e3e2",            # black mates after a forced white move: rows of both colours
+        f"{king_hunt.mirror().fen()} | e6e7",   # the same with colours swapped: white mates
+        f"{start} | f2f3 e7e5 g2g4",            # black to move, Qh4#
+        f"{start} | e2e4 f7f6 d2d4 g7g5",       # white to move, Qh5#
+    ]
+    openings = tmp_path / "train.jsonl"
+    openings.write_text("".join(json.dumps({"id": f"o{i}", "book": 1, "line": ln}) + "\n"
+                                for i, ln in enumerate(lines)))
+    out = tmp_path / "pov" / "gen_0001" / "collect"
+    collect_generation(gen_dir=out, generation=1, checkpoint=ckpt, train_jsonl=openings,
+                       settings=CollectSettings(games=4, concurrency=4, sims=8, max_plies=24, seed=9,
+                                                book_mix=(1.0,)))
+
+    games = {}
+    for path in out.rglob("games.jsonl"):
+        for row in path.read_text().splitlines():
+            game = json.loads(row)
+            games[int(game["game_id"])] = game
+    assert len(games) == 4
+    assert {g["result"] for g in games.values()} >= {"1-0", "0-1"}, "fixture lost a decisive result"
+
+    arrays, meta = load_generation_rows(out)
+    seen: set[tuple[str, int]] = set()  # (result, label) pairs observed
+    for game_id, ply, label in zip(meta["game_id"].tolist(), meta["ply_index"].tolist(),
+                                   arrays["wdl_target"].tolist(), strict=True):
+        game = games[int(game_id)]
+        fen, _, opening_moves = lines[int(game["opening_id"][1:])].partition(" | ")
+        board = chess.Board(fen)
+        for uci in (*opening_moves.split(), *game["uci"]):
+            if board.ply() == int(ply):
+                break
+            board.push_uci(uci)
+        assert board.ply() == int(ply), (game, ply)
+        white_score = {"1-0": 1, "0-1": -1, "1/2-1/2": 0}[game["result"]]
+        mover_score = white_score if board.turn == chess.WHITE else -white_score
+        assert int(label) == {1: 0, 0: 1, -1: 2}[mover_score], (game["result"], board.fen(), label)
+        seen.add((game["result"], int(label)))
+    # winner's and loser's rows, for both results: a constant or white-POV label cannot produce all four
+    assert seen >= {("1-0", 0), ("1-0", 2), ("0-1", 0), ("0-1", 2)}, seen

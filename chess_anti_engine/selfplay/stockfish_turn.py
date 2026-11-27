@@ -410,7 +410,9 @@ def flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
     """Flip a ``[W, D, L]`` vector to the opposite POV (swaps W and L)."""
     wdl = np.asarray(wdl, dtype=np.float32)
     if wdl.shape != (3,):
-        return wdl.astype(np.float32, copy=False)
+        # Returning the input here handed back a label still in the OTHER
+        # side's point of view, silently.
+        raise ValueError(f"flip_wdl_pov needs a (3,) [W, D, L] vector, got shape {wdl.shape}")
     return np.array(
         [float(wdl[2]), float(wdl[1]), float(wdl[0])], dtype=np.float32,
     )
