@@ -797,3 +797,42 @@ generations meets the same rule.
 **Stop / relaunch** are unchanged except for the hash to check:
 `sha256sum ~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` must print
 `12145ed86229a09ee21b667f37b0e4d3bb6bd2948db1318d926d49dcdaabff9e`. The run's exit marker is `phaseb/exit`.
+
+## Phase B verdict (read 2026-11-27)
+
+Phase B exited 0 at 15:52:51 EST (`phaseb/exit` = `0 2026-11-27T15:52:51-05:00`, newer than `phase_b.pid`); every
+step's exit reads 0. Read once, with no threshold changed, by
+`~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/verdicts3_v2.py` [`3b78ec89`] into
+`~/chess-artifacts/operations/rl-deep-fast/stage2/verdicts.json` [`6e5a1930`]. Both matches are 12,800 games (3,200 opening pairs per seat), 64 v 64 sims, seed 2026112711,
+against the parent and actor `kC_baked.pt` (`c48a7b2c…`). The damage screens did not fire.
+
+| Reading | Estimate (Elo, 95% CI) | Per seat | Registered verdict |
+|---|---|---|---|
+| C (stock 64, 2,648,696 rows once, 5,174 updates) vs parent | **−5.81 [−10.07, −1.55]** | A −7.44 [−13.45, −1.43], B −4.18 [−10.15, +1.79]; seat offset −1.63 [−5.83, +2.58] | **damage** (UB95 < 0) |
+| D (deep/fast, 1,064,425 rows once, 2,079 updates) vs parent | **−3.34 [−7.68, +1.00]** | A −8.96 [−14.98, −2.94], B +2.28 [−3.65, +8.22]; seat offset −5.62 [−9.73, −1.51] | **adoptable** (LB95 > −10, interval includes 0) |
+| **Readout A**, Δ̂_DC = d̄_D − d̄_C | +0.00355 score (≈ +2.5 Elo), SE 0.00446; one-sided bounds −0.00379 / +0.01090 | bootstrap check CI95 [−0.00512, +0.01234], P(Δ ≤ 0) 0.218 | **unread** |
+| Readout B | D+O not played (the sibling screen's term has no Stage A reading, so D+O was not built) | | **unread (D+O not played)**; stays open until 2027-01-31 as registered |
+
+Cost check: D / C active collection hours 1.0012, inside [0.9, 1.1].
+Files: `~/chess-artifacts/operations/rl-deep-fast/stage2/arenas/C_vs_kC/pool.json` [`3968c967`],
+`~/chess-artifacts/operations/rl-deep-fast/stage2/arenas/D_vs_kC/pool.json` [`7dba9c00`].
+
+Confound 10, as promised: 1,635 of the 6,251 top-up starts (26.2%) are also in D's main collect's `starts.txt`.
+The pool rule revision (`pool_D` kept one repeated game id) and the relaunch before that addendum merged are
+disclosed in the previous section; both precede every number here.
+
+**What this licenses.**
+
+- Readout A is unread: at equal collection GPU-hours this record makes **no claim** that deep/fast collection is
+  better or worse than stock 64. The point estimate favours D by 2.5 Elo with 0.4 of the rows and updates; that is a
+  point estimate (bootstrap P(Δ ≤ 0) 0.22); no direction is claimed.
+- Neither arm improved on its parent. C, the line's next stock generation with the dose that gave kC +5.08 one
+  generation earlier, reads damage. In this run the second stock generation did not stack at 64 sims
+  (one training seed, one match seed); kC's own step was fragile (confound 6), so "the parent was overrated by its one match" is not excluded.
+- D's seats disagree by 11 Elo (seat offset interval excludes 0). Its pooled interval is the registered reading; the
+  seat split is reported, not interpreted.
+- Neither `C_baked.pt` nor `D_baked.pt` is adopted as an actor. `kC_baked.pt` stays the parent for the value
+  follow-up ([record](2026-11-27-rl-value-followup-after-deep-fast.md)), whose Step 1 reads these two nets' value
+  heads on kC's policy and was launched at 15:54:07 EST the same day.
+
+Readout A is closed (unread). Readout B stays open under the registered date rule; D3 and D+O are not registered.
