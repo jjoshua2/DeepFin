@@ -917,12 +917,18 @@ def _uci_moves(start_fen: str, actions: Any, final_fen: str) -> list[str]:
     """A game's played moves as UCI, replayed from its start position (the
     write-only move-list record: games.jsonl keeps both this and the action ids).
     Refuses a list that does not reach the game's final position."""
-    from chess_anti_engine.moves.encode import index_to_move
+    from chess_anti_engine.moves.encode import POLICY_SIZE, index_to_move_strict, move_to_index
 
     board = chess.Board(start_fen)
     out = []
     for a in actions:
-        move = index_to_move(int(a), board)
+        index = int(a)
+        # Avoid NumPy's negative-index wraparound in the move decoder's LUT.
+        if not 0 <= index < POLICY_SIZE:
+            raise ValueError(f"played action id {index} is outside [0, {POLICY_SIZE})")
+        move = index_to_move_strict(index, board)
+        if move_to_index(move, board) != index:
+            raise ValueError(f"played action id {index} is noncanonical for {move.uci()}")
         out.append(move.uci())
         board.push(move)
     # Compare python-chess's normal form on both sides: the C board writes an en
