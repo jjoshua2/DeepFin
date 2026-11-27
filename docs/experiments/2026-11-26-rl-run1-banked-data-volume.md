@@ -1209,9 +1209,9 @@ read in "Control verdict" above.**
   was OK and `operator_volume.sh --no-launch` verified it.
 - **Launch:** pid 2991792; launcher sha256 `f0a2e7b42ef8ce410eb3a45515947610ef224b8df163fd2132cc536a0bb44afc`
   (`resume.log`), which is the staged `launch_volume.sh` below.
-- **The `OWNER_GO` line, verbatim:**
+- **The `OWNER_GO` line, verbatim except that the owner's first name is replaced by `<owner>`:**
 
-  > Fable(coordinator, for owner Josh under his 2026-11-25 instruction to run autonomously) 2026-11-26T10:54:14-05:00 launch data-volume conditional control (c2x); record PR1524 da5e3fa95 (merged) + addendum PR1532 reviewed MERGE at aa44b355c, CI pending; staged bank reviewed GO at SHA256SUMS cc910348
+  > Fable(coordinator, for owner <owner> under his 2026-11-25 instruction to run autonomously) 2026-11-26T10:54:14-05:00 launch data-volume conditional control (c2x); record PR1524 da5e3fa95 (merged) + addendum PR1532 reviewed MERGE at aa44b355c, CI pending; staged bank reviewed GO at SHA256SUMS cc910348
 
 **Deviation, stated plainly.** This section was written to say the control launches only after #1532 and this
 section are merged. In fact the launch came first:
