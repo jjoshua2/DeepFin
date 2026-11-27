@@ -81,8 +81,8 @@ The per-arm readings are reported beside it: each arm's E against kC, from both 
 
 | Reading | Look 1 (3,200 per arm) | Final (12,800 per arm) |
 |---|---|---|
-| Δ | \|Δ\| < 5: no C-vs-D value difference at screen resolution. Δ ≥ +15 with LB > 0: D's rows teach value better. Δ ≤ −15 with UB < 0: C's rows teach value better. Anything else: extend. | LB > 0: D better. UB < 0: C better. Otherwise: no detectable difference. |
-| Each arm's E vs kC | ≥ +15 with LB > 0: value gain over the parent. ≤ −15 with UB < 0: value loss. In [+5, +15): extend. Otherwise: no gain at screen resolution. | LB > 0: gain. UB < 0: loss. Otherwise: no detectable difference. |
+| Δ | \|Δ\| < 5: stop; read as "not resolved at 3,200 games" and quote the interval (about ±9 Elo or wider, so a 10 to 14 Elo difference is not ruled out). Δ ≥ +15 with LB > 0: D's rows teach value better. Δ ≤ −15 with UB < 0: C's rows teach value better. Anything else: extend. | LB > 0: D better. UB < 0: C better. Otherwise: no detectable difference. |
+| Each arm's E vs kC | ≥ +15 with LB > 0: value gain over the parent. ≤ −15 with UB < 0: value loss. In [+5, +15): extend. Otherwise: stop; read as "no gain resolved at 3,200 games" and quote the interval. | LB > 0: gain. UB < 0: loss. Otherwise: no detectable difference. |
 
 Extension is all or nothing. Look 2 is played for **both** arms iff the Δ rule or either arm's rule says extend. Look 2
 is 4,800 games per seat at seed 2026112722, so 12,800 per arm in all. The final reading pools looks 1 and 2.
@@ -284,3 +284,14 @@ extension.
 None of the steps changes live training, the live yaml or any banked file. Each step's outputs are new directories
 under the new bank. Stop with the pid file. Read-only inputs: phase B's nets and pool, the pilot's openings, and
 `kC_baked.pt`.
+
+**Review notes (2026-11-27, non-author review on PR #1551).** (1) The look-1 stop bands above are decided on the point
+estimate; they are stopping rules, not evidence of no effect, and every readout quotes the interval. (2)
+`launch_step1.sh` and `run_v_match.sh` read an environment override `VF_PY` for the interpreter. It is not part of the
+recorded inputs, the launch command does not set it, and the launcher must be run with `VF_PY` unset; a later revision
+of the bank drops it. (3) At look 1 an arm with E ≥ +15 whose lower bound is ≤ 0 is labelled "no gain" by
+`contrast_v.py` and not extended; at about ±9 Elo this is not reachable in practice, and such a reading would be
+reported as unresolved. The reviewer settled two items the author could not check without torch, from source at
+`d08b03adb`: result rows carry `candidate_value` / `reference_value` for a hybrid seat (`scripts/arena_standard.py`),
+and `arena_seat_balanced_pool.py` accepts an arm whose policy file is the parent's.
+
