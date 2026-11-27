@@ -255,11 +255,15 @@ default matrix scope, the value head's own weights (`value_wdl.*`) are in groups
 and norms. The trunk, which carries most of what value learns, is in group 0.
 
 **Proposed arms (one variable: the groups-1–3 lr, value weights as the Step 2 winner):**
-- `lr1e-5`: `--lr 1e-5 --lr-floor 1e-5`, about 3.3× the current value.
-- `lr3e-5`: `--lr 3e-5 --lr-floor 3e-5`, 10×, half of group 0's 6e-5.
+- `lr1e-5`: `--lr 1e-5 --lr-floor 1e-5 --matrix-lr-multiplier 6`, about 3.3× the current value.
+- `lr3e-5`: `--lr 3e-5 --lr-floor 3e-5 --matrix-lr-multiplier 2`, 10×, half of group 0's 6e-5.
 
-Group 0 stays at its init-checkpoint value. Changing it needs `--optimizer-hparams-source` other than
-`init-checkpoint`, which is a second variable.
+**Group 0 does not stay fixed by itself (corrected after the Codex inline finding on PR #1551).** `init-checkpoint`
+imports the checkpoint's matrix/aux *ratio* (20), not group 0's absolute rate (`simple_rl/learn.py`,
+`matrix_lr_multiplier = mat lr / aux lr`), and the trainer sets `matrix_lr = lr × matrix_lr_multiplier`
+(`train/trainer.py`). Without compensation the two arms would run the trunk at 2e-4 and 6e-4, a second variable. The
+explicit multipliers 6 and 2 hold group 0 at 6e-5. Before either arm's match, the realised rate of every optimizer
+group is read from the trained run (Phase B's `opt_check.py` pattern) and the arm is void if group 0 is not 6e-5.
 
 The policy heads share groups 2/3, so their lr moves too. Under the head-swap reading the policy is kC's, so that
 cannot reach the result.
