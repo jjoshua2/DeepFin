@@ -1,0 +1,55 @@
+{
+  "artifacts_sha256": {
+    "frozen-plan.json": "fff5a16cc7af7a86765180ba813cddc1fdeb9164d62375ad898ec05a7abb6bf5",
+    "raw-sf.npz": "b3ffc1bd200c283206cc0d06f01debe6e7f2e74fee8fe02ca3331ab69e222a25",
+    "result.json": "35ac7fe8a8ce3f98b30ec5c51c98535a53d1cdf843290b0e3045f58f2b81d826"
+  },
+  "created_utc": "2026-11-12T13:43:20.286395+00:00",
+  "input_receipt_sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249",
+  "limits": {
+    "AS": 8589934592,
+    "CPU": 120,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 150
+  },
+  "limits_of_inference": [
+    "Nodes/depth are recorded effort metadata, not independent remeasurement or calibrated strength",
+    "These labels concern action-conditioned child positions, not directly the root predictions",
+    "Exact played action/full successor-history binding absent; recommended move cannot substitute",
+    "All numeric labels valid-looking does not prove historical provenance or absence of fallback",
+    "No source corpus reread or model/engine execution for review"
+  ],
+  "physical_action_fields_absent_as_recorded": {
+    "has_sf_played_move": true,
+    "sf_played_move_index": true
+  },
+  "raw_value_sha256": {
+    "has_sf_label_meta": "bfcef77595d3264bcc2c3b30ec86093dd90416944d985aa3e6079093678b60b6",
+    "has_sf_wdl": "bfcef77595d3264bcc2c3b30ec86093dd90416944d985aa3e6079093678b60b6",
+    "sf_label_meta": "3edaaf8c1cacc14502bf9e81ac1cf364d2ae9b3dc6b47575f2db9bae613b2953",
+    "sf_wdl": "3c0d63d58232b020847111eefb20ac8cbd22666cc6cda0dad7bccf052f182c6c"
+  },
+  "recomputed": {
+    "depth_max": 15,
+    "depth_min": 2,
+    "finite_bounded_near_simplex": 254,
+    "labels_present": 254,
+    "max_abs_sum_error": 0.0003662109375,
+    "metadata_present": 254,
+    "nodes_max": 5047,
+    "nodes_min": 3065,
+    "rows": 254
+  },
+  "remaining_owned_children": 0,
+  "rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+  "runner_sha256": "68d556b764c60f9d67e4b0207605c1eb5a03a00fa54f75785817137212dc2507",
+  "schema": "independent-sf-coverage-review/v1",
+  "source_revision": "6ae0290b9d7d13d139c5f202b2b9ff56fe06f241",
+  "status": "ACCEPTED_COVERAGE_ONLY",
+  "verification": [
+    "Saved NPZ decoded allow_pickle=False; all raw hashes/masks/order and input binding checked",
+    "Metadata and Python source pins match frozen plan/exact commit",
+    "No normalization, model scoring, inference or engine launched"
+  ]
+}

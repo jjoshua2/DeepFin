@@ -1,0 +1,361 @@
+{
+  "all_rows": {
+    "brier_delta": 0.021823871527518968,
+    "brier_delta_by_WDL": [
+      0.00303998097301058,
+      0.014832753626421146,
+      0.003951136928087244
+    ],
+    "brier_delta_draw_error_component": 0.022249130439631715,
+    "brier_delta_score_error_component": -0.00042526000875440655,
+    "draw_MAE": {
+      "candidate": 0.08227346786411241,
+      "donor": 0.001092657802448706
+    },
+    "expected_score_MAE": {
+      "candidate": 0.06057292353963339,
+      "donor": 0.051828363986889184
+    },
+    "logloss_delta": 0.014254912939903998,
+    "logloss_delta_by_WDL": [
+      -0.011584787606714499,
+      0.019836008351455745,
+      0.006003692195162766
+    ],
+    "mean_WDL": {
+      "candidate": [
+        0.2680402154865096,
+        0.47830320507820556,
+        0.25365658286625153
+      ],
+      "donor": [
+        0.2574662077582387,
+        0.4830625343338612,
+        0.2594712574344365
+      ],
+      "target": [
+        0.2589225002506779,
+        0.48332095288140464,
+        0.2577565468679176
+      ]
+    },
+    "mean_entropy_nats": {
+      "candidate": 0.7074533968583747,
+      "donor": 0.5980601311794548,
+      "target": 0.6265164304004037
+    },
+    "mean_max_probability": {
+      "candidate": 0.7028338555979916,
+      "donor": 0.7496514503411421,
+      "target": 0.7317238454216255
+    },
+    "row_counts": {
+      "brier_better": 53,
+      "brier_worse": 201,
+      "draw_decreased": 117,
+      "draw_increased": 137,
+      "logloss_better": 67,
+      "logloss_worse": 187
+    },
+    "rows": 254
+  },
+  "all_rows_used": true,
+  "bindings": {
+    "architecture": {
+      "_schema_version": 20,
+      "arc_attention_bias": "none",
+      "aux_policy_head_dim": 128,
+      "categorical_head_coupled": true,
+      "dynamic_relation_count": 5,
+      "embed_dim": 512,
+      "embed_dim_by_layer": null,
+      "enable_policy_sf_head": true,
+      "ffn_mult": 1.5,
+      "ffn_mult_by_layer": [
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.555556,
+        1.65,
+        1.772222,
+        1.894444,
+        1.666667,
+        1.638889,
+        1.905556,
+        1.783333,
+        1.794444,
+        1.744444,
+        1.5
+      ],
+      "history_rep_fix": true,
+      "input_extra_features": "v2_threats",
+      "input_global_embedding": "none",
+      "input_global_embedding_channels": 0,
+      "input_history_encoding": "lc0_root_legacy_meta",
+      "input_pos_encoding": "arc_adapter",
+      "input_square_embedding": "none",
+      "kind": "transformer",
+      "num_heads": 16,
+      "num_layers": 16,
+      "phase_output_adapter": false,
+      "phase_output_adapter_dim": 64,
+      "phase_piece_thresholds": [
+        13,
+        22
+      ],
+      "phase_smolgen": false,
+      "policy_dynamic_relations": false,
+      "policy_embedding_mode": "linear",
+      "policy_encoding": "lc0_1858",
+      "qkv_projection": "split",
+      "smolgen_bias_norm": "center_rms",
+      "smolgen_bias_scale": "layer_head",
+      "smolgen_gen_sz": 256,
+      "smolgen_hidden_channels": 32,
+      "smolgen_hidden_sz": 256,
+      "smolgen_mode": "per_layer",
+      "smolgen_pooling": "flatten",
+      "smolgen_relation_basis": true,
+      "smolgen_relation_coeff_norm": "none",
+      "smolgen_relation_norm": "none",
+      "smolgen_relation_scale": "none",
+      "use_deepnorm": true,
+      "use_dynamic_relations": false,
+      "use_gradient_checkpointing": false,
+      "use_nla": false,
+      "use_qk_rmsnorm": false,
+      "use_smolgen": true
+    },
+    "models": {
+      "candidate": {
+        "checkpoint_sha256": "cc2aa8fc00db3510f5101c5471522bbfa4356d64ce03abb9588c677de1bbb6ba",
+        "probabilities_sha256": "c5c43b19ed17909a1479aa558f60b75a0991172be0c16ee22e6c1c849c54aee7",
+        "receipt_sha256": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f"
+      },
+      "donor": {
+        "checkpoint_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "probabilities_sha256": "d5483a74b912409214cc81f13f06248b396976045babcb97232b74dd6d94578b",
+        "receipt_sha256": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff"
+      }
+    },
+    "rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+    "saved_receipt_sha256": {
+      "accepted": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249",
+      "candidate": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f",
+      "donor": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff",
+      "plan": "66af496839b589b6c773abcb34ff7597569bb9f6c76f02d5cf444e79cee5b63b"
+    },
+    "source_revision": "53f8908522e0659b0661f484586dc1e35c55e309",
+    "target_normalization": {
+      "max_abs_normalization_correction": 0.00024336601252272771,
+      "max_abs_sum_error": 0.0003662109375,
+      "raw_float16_sha256": "dbaf8d09949c20d1b1f296c987f30294368a8dd4a3ab8a1f35c0084b073dc17a",
+      "sum_tolerance": 0.001
+    },
+    "targets_sha256": "5638ee0d1ce0399757f636e1a89977acbb66779955a8e8df6b8f20269a6adc2e"
+  },
+  "brier_basis": "For simplex: Brier=2*(E_pred-E_target)^2+1.5*(D_pred-D_target)^2; FP32 simplex residual decomposition discrepancy <2e-7 per row",
+  "component_order": [
+    "W",
+    "D",
+    "L"
+  ],
+  "created_utc": "2026-11-12T12:45:55.376950+00:00",
+  "input_result_sha256": "97ec7a37a96c0a6a32ea3e5ccd08537e3a6f3b4218148e714e4ecf5004a2a3ba",
+  "input_target_artifact_sha256": "34c2ea8d74ffb38af243ad8a7396539fcf22983b92b4ec4c50bb760902347027",
+  "limits": [
+    "Saved-output analysis only; no inference/corpus reread/new rows",
+    "Agreement with recorded producer-search targets only, not truth/final training mixture/strength",
+    "Source-declared STM only; real semantic POV unverified",
+    "Producer nonfinite draw-fallback incidence unknown",
+    "Training-ingested source, exact sampled exposure unknown; groups not independent",
+    "Components and confidence metrics are descriptive, not causal attribution"
+  ],
+  "log_floor": 1e-12,
+  "per_supplied_group": {
+    "4574726265432138265": {
+      "brier_delta": 0.03649021374053627,
+      "brier_delta_by_WDL": [
+        0.007081888194861701,
+        0.01859125799363497,
+        0.0108170675520396
+      ],
+      "brier_delta_draw_error_component": 0.02788688699045245,
+      "brier_delta_score_error_component": 0.008603324917518007,
+      "draw_MAE": {
+        "candidate": 0.09010421708888416,
+        "donor": 0.0010053190489511532
+      },
+      "expected_score_MAE": {
+        "candidate": 0.06112620115335513,
+        "donor": 0.03181945836831938
+      },
+      "logloss_delta": 0.05184441518752014,
+      "logloss_delta_by_WDL": [
+        -0.010576733579110013,
+        0.021558679110779876,
+        0.04086246965585028
+      ],
+      "mean_WDL": {
+        "candidate": [
+          0.2859153053657267,
+          0.4268957656692982,
+          0.28718893294529896
+        ],
+        "donor": [
+          0.26547494618416845,
+          0.43049835250502905,
+          0.304026699282995
+        ],
+        "target": [
+          0.2702334280118581,
+          0.4310111340355701,
+          0.29875543795257187
+        ]
+      },
+      "mean_entropy_nats": {
+        "candidate": 0.6832343253656856,
+        "donor": 0.5446952922540444,
+        "target": 0.5622475729086902
+      },
+      "mean_max_probability": {
+        "candidate": 0.716236429423401,
+        "donor": 0.7693536770097988,
+        "target": 0.7599457393601635
+      },
+      "row_counts": {
+        "brier_better": 12,
+        "brier_worse": 85,
+        "draw_decreased": 46,
+        "draw_increased": 51,
+        "logloss_better": 16,
+        "logloss_worse": 81
+      },
+      "rows": 97
+    },
+    "5641434355974801433": {
+      "brier_delta": 0.013895546172129427,
+      "brier_delta_by_WDL": [
+        0.0006348652415732535,
+        0.01271412807306766,
+        0.000546552857488515
+      ],
+      "brier_delta_draw_error_component": 0.01907119210960148,
+      "brier_delta_score_error_component": -0.005175644807438135,
+      "draw_MAE": {
+        "candidate": 0.07381898580895334,
+        "donor": 0.0012915347628980989
+      },
+      "expected_score_MAE": {
+        "candidate": 0.052446305130027786,
+        "donor": 0.05930868998405432
+      },
+      "logloss_delta": 0.0023678889683914385,
+      "logloss_delta_by_WDL": [
+        -0.018012958168190932,
+        0.027201715295598214,
+        -0.006820868159015823
+      ],
+      "mean_WDL": {
+        "candidate": [
+          0.29368682653407685,
+          0.44759413739465626,
+          0.25871904224863856
+        ],
+        "donor": [
+          0.2827049763077046,
+          0.4626539332779451,
+          0.25464109421135483
+        ],
+        "target": [
+          0.2805243326500428,
+          0.4626152145861632,
+          0.2568604527637939
+        ]
+      },
+      "mean_entropy_nats": {
+        "candidate": 0.7117974811342745,
+        "donor": 0.6519972594623029,
+        "target": 0.6706049592387088
+      },
+      "mean_max_probability": {
+        "candidate": 0.683870934206864,
+        "donor": 0.7072520910323351,
+        "target": 0.6936704568017449
+      },
+      "row_counts": {
+        "brier_better": 19,
+        "brier_worse": 68,
+        "draw_decreased": 45,
+        "draw_increased": 42,
+        "logloss_better": 24,
+        "logloss_worse": 63
+      },
+      "rows": 87
+    },
+    "6842486203887630397": {
+      "brier_delta": 0.011354287402607712,
+      "brier_delta_by_WDL": [
+        0.00042826766037470205,
+        0.012257689333878472,
+        -0.0013316695916454607
+      ],
+      "brier_delta_draw_error_component": 0.018386534000817707,
+      "brier_delta_score_error_component": -0.007032249442510689,
+      "draw_MAE": {
+        "candidate": 0.08193000020691209,
+        "donor": 0.000966508710022497
+      },
+      "expected_score_MAE": {
+        "candidate": 0.0699064645839859,
+        "donor": 0.07025801374757354
+      },
+      "logloss_delta": -0.02305952466719848,
+      "logloss_delta_by_WDL": [
+        -0.00499236477570286,
+        0.008294357382958042,
+        -0.02636151727445368
+      ],
+      "mean_WDL": {
+        "candidate": [
+          0.21139537435190375,
+          0.5877062123801027,
+          0.20089841252431923
+        ],
+        "donor": [
+          0.21500020074225695,
+          0.5812664476090244,
+          0.20373334802154983
+        ],
+        "target": [
+          0.2164007943709748,
+          0.5815416908775749,
+          0.20205751475145037
+        ]
+      },
+      "mean_entropy_nats": {
+        "candidate": 0.7356150340410547,
+        "donor": 0.6049724056816977,
+        "target": 0.6607789613684566
+      },
+      "mean_max_probability": {
+        "candidate": 0.7078299198831831,
+        "donor": 0.7750461399555206,
+        "target": 0.7399112896772173
+      },
+      "row_counts": {
+        "brier_better": 22,
+        "brier_worse": 48,
+        "draw_decreased": 26,
+        "draw_increased": 44,
+        "logloss_better": 27,
+        "logloss_worse": 43
+      },
+      "rows": 70
+    }
+  },
+  "rows": 254,
+  "schema": "saved-search-agreement-decomposition/v1"
+}

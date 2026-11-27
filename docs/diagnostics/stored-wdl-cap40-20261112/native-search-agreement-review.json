@@ -1,0 +1,176 @@
+{
+  "artifact_sha256": {
+    "frozen-plan.json": "bb970f72f840846b880fe595d3a2ebca6d40b9f6aa0ae080fed973598be5393d",
+    "result.json": "97ec7a37a96c0a6a32ea3e5ccd08537e3a6f3b4218148e714e4ecf5004a2a3ba",
+    "targets.npz": "34c2ea8d74ffb38af243ad8a7396539fcf22983b92b4ec4c50bb760902347027"
+  },
+  "bindings": {
+    "architecture": {
+      "_schema_version": 20,
+      "arc_attention_bias": "none",
+      "aux_policy_head_dim": 128,
+      "categorical_head_coupled": true,
+      "dynamic_relation_count": 5,
+      "embed_dim": 512,
+      "embed_dim_by_layer": null,
+      "enable_policy_sf_head": true,
+      "ffn_mult": 1.5,
+      "ffn_mult_by_layer": [
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.5,
+        1.555556,
+        1.65,
+        1.772222,
+        1.894444,
+        1.666667,
+        1.638889,
+        1.905556,
+        1.783333,
+        1.794444,
+        1.744444,
+        1.5
+      ],
+      "history_rep_fix": true,
+      "input_extra_features": "v2_threats",
+      "input_global_embedding": "none",
+      "input_global_embedding_channels": 0,
+      "input_history_encoding": "lc0_root_legacy_meta",
+      "input_pos_encoding": "arc_adapter",
+      "input_square_embedding": "none",
+      "kind": "transformer",
+      "num_heads": 16,
+      "num_layers": 16,
+      "phase_output_adapter": false,
+      "phase_output_adapter_dim": 64,
+      "phase_piece_thresholds": [
+        13,
+        22
+      ],
+      "phase_smolgen": false,
+      "policy_dynamic_relations": false,
+      "policy_embedding_mode": "linear",
+      "policy_encoding": "lc0_1858",
+      "qkv_projection": "split",
+      "smolgen_bias_norm": "center_rms",
+      "smolgen_bias_scale": "layer_head",
+      "smolgen_gen_sz": 256,
+      "smolgen_hidden_channels": 32,
+      "smolgen_hidden_sz": 256,
+      "smolgen_mode": "per_layer",
+      "smolgen_pooling": "flatten",
+      "smolgen_relation_basis": true,
+      "smolgen_relation_coeff_norm": "none",
+      "smolgen_relation_norm": "none",
+      "smolgen_relation_scale": "none",
+      "use_deepnorm": true,
+      "use_dynamic_relations": false,
+      "use_gradient_checkpointing": false,
+      "use_nla": false,
+      "use_qk_rmsnorm": false,
+      "use_smolgen": true
+    },
+    "models": {
+      "candidate": {
+        "checkpoint_sha256": "cc2aa8fc00db3510f5101c5471522bbfa4356d64ce03abb9588c677de1bbb6ba",
+        "probabilities_sha256": "c5c43b19ed17909a1479aa558f60b75a0991172be0c16ee22e6c1c849c54aee7",
+        "receipt_sha256": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f"
+      },
+      "donor": {
+        "checkpoint_sha256": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0",
+        "probabilities_sha256": "d5483a74b912409214cc81f13f06248b396976045babcb97232b74dd6d94578b",
+        "receipt_sha256": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff"
+      }
+    },
+    "rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+    "saved_receipt_sha256": {
+      "accepted": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249",
+      "candidate": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f",
+      "donor": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff",
+      "plan": "66af496839b589b6c773abcb34ff7597569bb9f6c76f02d5cf444e79cee5b63b"
+    },
+    "source_revision": "53f8908522e0659b0661f484586dc1e35c55e309",
+    "target_normalization": {
+      "max_abs_normalization_correction": 0.00024336601252272771,
+      "max_abs_sum_error": 0.0003662109375,
+      "raw_float16_sha256": "dbaf8d09949c20d1b1f296c987f30294368a8dd4a3ab8a1f35c0084b073dc17a",
+      "sum_tolerance": 0.001
+    },
+    "targets_sha256": "5638ee0d1ce0399757f636e1a89977acbb66779955a8e8df6b8f20269a6adc2e"
+  },
+  "group_sizes": [
+    97,
+    87,
+    70
+  ],
+  "groups": 3,
+  "input_receipt_sha256": {
+    "accepted": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249",
+    "candidate": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f",
+    "donor": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff",
+    "plan": "66af496839b589b6c773abcb34ff7597569bb9f6c76f02d5cf444e79cee5b63b"
+  },
+  "interpretation_limits": [
+    "Recorded producer-search-target agreement only; not final mixed training loss, SF truth, correctness, calibration, heldout or strength",
+    "Candidate agrees less on both aggregate metrics; Brier worse in all 3 supplied groups, logloss worse in 2 and better in 1",
+    "Training-ingested shard; exact sampled-row exposure unknown; supplied groups not statistical independence",
+    "Nonfinite-to-draw fallback incidence unknown; all draws retained",
+    "STM WDL source-declared only; real semantic POV control unperformed",
+    "Recorded limits are execution settings, not independent peak-resource telemetry"
+  ],
+  "limits": {
+    "AS": 8589934592,
+    "CPU": 120,
+    "CUDA": "",
+    "threads": 1,
+    "wall": 150
+  },
+  "normalization": {
+    "max_abs_normalization_correction": 0.00024336601252272771,
+    "max_abs_sum_error": 0.0003662109375,
+    "raw_float16_sha256": "dbaf8d09949c20d1b1f296c987f30294368a8dd4a3ab8a1f35c0084b073dc17a",
+    "sum_tolerance": 0.001
+  },
+  "recomputed": {
+    "brier": {
+      "candidate_minus_donor_equal_group_mean": 0.020580015771757804,
+      "candidate_minus_donor_row_mean": 0.021823871527518968,
+      "candidate_row_mean": 0.03658710957547943,
+      "donor_row_mean": 0.014763238047960463,
+      "group_deltas": [
+        0.03649021374053627,
+        0.013895546172129427,
+        0.011354287402607712
+      ]
+    },
+    "logloss": {
+      "candidate_minus_donor_equal_group_mean": 0.010384259829571033,
+      "candidate_minus_donor_row_mean": 0.014254912939903998,
+      "candidate_row_mean": 0.7077983277015412,
+      "donor_row_mean": 0.6935434147616372,
+      "group_deltas": [
+        0.05184441518752014,
+        0.0023678889683914385,
+        -0.02305952466719848
+      ]
+    }
+  },
+  "remaining_owned_child_count_at_review": 0,
+  "reviewed_at_utc": "2026-11-12T12:38:18.770723+00:00",
+  "rows": 254,
+  "rows_excluded": 0,
+  "runner_sha256": "11e9e234fc0c9f0b4def42137ac848f64cae90b729f15b451e0f9e35c70af68c",
+  "schema": "independent-native-search-agreement-review/v1",
+  "source_revision": "155f2f887861520fb8976860fbbbbeaa5007c814",
+  "status": "ACCEPTED_RECORDED_PRODUCER_SEARCH_TARGET_AGREEMENT",
+  "verification": [
+    "Raw float16 and normalized float64 NPZ decoded with allow_pickle=False",
+    "Exact 254-row target digest and model/prediction/receipt bindings verified",
+    "All presence hash matches 254 true flags",
+    "Losses and per-group differences independently recomputed from saved predictions",
+    "Python source hashes match pinned target-scoring revision",
+    "No corpus reread or model inference for this review"
+  ]
+}

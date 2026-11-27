@@ -1,0 +1,90 @@
+{
+  "checkpoint_sha256": {
+    "cap40": "cc2aa8fc00db3510f5101c5471522bbfa4356d64ce03abb9588c677de1bbb6ba",
+    "donor": "a39f900c944477c4ecf7f56cf0e1a6dd9486b67e5c2abb00973254e4bb6749b0"
+  },
+  "control_tolerances": {
+    "atol": 1e-06,
+    "rtol": 1e-05
+  },
+  "controls": {
+    "cap40_batch": {
+      "max_abs": 7.152557373046875e-07,
+      "pass": true
+    },
+    "donor_batch": {
+      "max_abs": 5.960464477539062e-07,
+      "pass": true
+    },
+    "donor_repeat": {
+      "max_abs": 0.0,
+      "pass": true
+    }
+  },
+  "extraction_receipt": {
+    "path": "~/chess-artifacts/operations/stored-wdl-cap40-direct-20261112-tsxbicyz/stored-wdl-prefix-3laxfnm8/result.json",
+    "sha256": "e0e61ac7c6246261d344ac2459c6e01b8512784d64ca49d50b24f843f9ce6249"
+  },
+  "group_sizes": [
+    70,
+    87,
+    97
+  ],
+  "input_receipts_sha256": {
+    "cap401.json": "38ca765fd4a32cde6864e8afc01d4144b94167588dff4d5ab558d852072e474e",
+    "cap4016.json": "3880c651a2893c829ca5b85daec7e57e17faaad8cd4501e695a2fa53498a476f",
+    "controls.json": "922a667b074d8820bff777ba9dcbeb04e23d42ed878acd253cb579b551cf3ba5",
+    "donor1.json": "82c315925d3697a4012b1418d0571e70e0ff46cd41505e7b6d734712e5547976",
+    "donor16.json": "61fc53f312fb1851452c46be4b0f018ec3d20f72f53ea02b89e501b0541584ff",
+    "donor16repeat.json": "3272802000bf43516e629964ed6397e92825788a9ad4e26e83e8b992ca6e383f",
+    "frozen-plan.json": "66af496839b589b6c773abcb34ff7597569bb9f6c76f02d5cf444e79cee5b63b",
+    "summary.json": "b97dc107a3899ca259c2efd506bc276677703294c1014b07200eb9fb46175c85"
+  },
+  "input_rows_sha256": "28fc79b056266bf728c51b8e093312dbe24004b449ec649d295d269cc83e16a5",
+  "interpretation_limits": [
+    "Target-free prediction drift only; no correctness/calibration/loss/strength/gain inference",
+    "Training-ingested shard; exact sampled-row training exposure unknown",
+    "Only three supplied producer-game hashes; no independence or heldout claim",
+    "STM WDL is source-declared; real semantic POV control unperformed",
+    "Small signed average masks substantial bidirectional movement",
+    "This review used saved outputs only; no model inference or corpus reread",
+    "Limits are recorded execution settings, not independent peak-resource telemetry"
+  ],
+  "recomputed": {
+    "absolute_expected_score_delta_quantiles": {
+      "0": 0.00011020898818969727,
+      "0.25": 0.012809318177460227,
+      "0.5": 0.036127492785453796,
+      "0.75": 0.08816702663898468,
+      "0.9": 0.16032195761799814,
+      "0.95": 0.19036832973361015,
+      "1": 0.29962873458862305
+    },
+    "equal_group_net_expected_score_delta": 0.007235358014535557,
+    "max_absolute_WDL_probability_delta": 0.5494439527392387,
+    "mean_absolute_expected_score_delta": 0.06068794119772344,
+    "net_expected_score_delta": 0.008194343100443102,
+    "row_mean_WDL_delta": [
+      0.010574007728270923,
+      -0.004759329255655643,
+      -0.005814674568184961
+    ],
+    "rows_negative": 121,
+    "rows_positive": 133,
+    "rows_zero": 0
+  },
+  "reviewed_at_utc": "2026-11-12T12:25:52.417931+00:00",
+  "rows": 254,
+  "schema": "independent-stored-wdl-result-review/v1",
+  "source_revision": "53f8908522e0659b0661f484586dc1e35c55e309",
+  "status": "ACCEPTED_TARGET_FREE_DESCRIPTIVE_RESULT",
+  "supplied_groups": 3,
+  "verification": [
+    "Receipt/model/architecture/input/source binding checked",
+    "Finite simplex probabilities checked",
+    "Summary arithmetic and prediction hashes independently recomputed",
+    "Recorded Python source hashes checked against pinned git revision",
+    "All five elapsed times below 90-second wall limit; declared 16GiB AS/60 CPU seconds/one thread/CUDA disabled",
+    "No remaining forward child at preceding independent review"
+  ]
+}
