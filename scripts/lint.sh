@@ -39,6 +39,15 @@
 # change collected none, PATHS falls back to the full default list and they run
 # whole-repo too.
 #
+# ENVIRONMENT. basedpyright reads the installed packages' types, so its result
+# depends on the interpreter it resolves imports from. CI lints from the locked
+# environment (uv sync --locked --extra dev --extra cpu). Tools come from, in
+# order: $CAE_LINT_VENV/bin when that variable is set (basedpyright is then also
+# pointed at $CAE_LINT_VENV/bin/python), else this checkout's .venv/bin, else
+# PATH. The first output line names the interpreter and its torch version, and
+# a mismatch with pyproject's torch pin is reported: a result from another torch
+# is not CI's result. See docs/development.md for the two-command local setup.
+#
 # Usage:
 #   scripts/lint.sh                     # gate on package + tests + scripts
 #   scripts/lint.sh path/a.py path/b.py # gate on given files (basedpyright scoped too)
@@ -69,7 +78,7 @@ for arg in "$@"; do
         --changed) USE_CHANGED=1 ;;
         --all) ;;  # noop: default behavior
         --help|-h)
-            sed -n '2,49p' "$0"
+            sed -n '2,58p' "$0"
             exit 0
             ;;
         *) PATHS+=("$arg"); USER_SET_PATHS=1 ;;
@@ -95,11 +104,49 @@ JOB_PIDS=()
 JOB_LOGS=()
 JOB_ADVISORY=()
 
+LINT_VENV="${CAE_LINT_VENV:-}"
+if [[ -n "$LINT_VENV" ]]; then
+    for required in python ruff basedpyright vulture; do
+        if [[ ! -x "$LINT_VENV/bin/$required" ]]; then
+            echo "lint: CAE_LINT_VENV has no executable bin/$required; build it as docs/development.md describes" >&2
+            exit 2
+        fi
+    done
+fi
+
 tool() {
-    if [[ -x ".venv/bin/$1" ]]; then
+    if [[ -n "$LINT_VENV" ]]; then
+        printf '%s/bin/%s\n' "$LINT_VENV" "$1"
+    elif [[ -x ".venv/bin/$1" ]]; then
         printf '.venv/bin/%s\n' "$1"
     else
         printf '%s\n' "$1"
+    fi
+}
+
+report_lint_environment() {
+    # Package metadata only: importing torch here would open the GPU device.
+    local python label torch pin
+    if [[ -n "$LINT_VENV" ]]; then
+        python="$LINT_VENV/bin/python"
+        label="CAE_LINT_VENV"
+    elif [[ -x .venv/bin/python ]]; then
+        python=".venv/bin/python"
+        label="checkout .venv"
+    else
+        python="$(command -v python3 || command -v python || true)"
+        label="PATH"
+    fi
+    torch="not installed"
+    if [[ -n "$python" ]]; then
+        torch="$("$python" -c 'import importlib.metadata as m; print(m.version("torch"))' 2>/dev/null || echo "not installed")"
+    fi
+    pin="$(sed -n 's/^cpu = \["torch==\([^"]*\)"\]$/\1/p' pyproject.toml)"
+    echo "lint environment ($label): python=$("${python:-false}" -c 'import sys; print(sys.version.split()[0])' 2>/dev/null || echo unknown) torch=$torch pyproject_pin=${pin:-unknown}"
+    if [[ "${torch%%+*}" != "$pin" ]]; then
+        echo "::: WARNING: lint is NOT using the pinned torch ($torch here, $pin in pyproject.toml)." >&2
+        echo ":::          basedpyright findings can differ from CI in both directions." >&2
+        echo ":::          Set CAE_LINT_VENV to the locked environment (docs/development.md)." >&2
     fi
 }
 
@@ -129,10 +176,14 @@ run_basedpyright() {
     # tests/test_replay_disk_buffer.py, which that PR did not touch. A scoped run
     # structurally cannot see that. --changed is the commit-time form, where the
     # whole-repo scan is worth the 34s.
+    local interpreter=()
+    if [[ -n "$LINT_VENV" ]]; then
+        interpreter=(--pythonpath "$LINT_VENV/bin/python")
+    fi
     if [[ $USER_SET_PATHS -eq 1 && $USE_CHANGED -eq 0 ]]; then
-        "$(tool basedpyright)" "${PATHS[@]}"
+        "$(tool basedpyright)" "${interpreter[@]}" "${PATHS[@]}"
     else
-        "$(tool basedpyright)"
+        "$(tool basedpyright)" "${interpreter[@]}"
     fi
 }
 
@@ -194,6 +245,7 @@ run_group() {
 }
 
 echo
+report_lint_environment
 echo "::: running lint tools in parallel"
 start_job 0 "ruff check" env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check "${PATHS[@]}"
 start_job 0 "basedpyright" run_basedpyright

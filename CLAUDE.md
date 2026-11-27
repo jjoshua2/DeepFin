@@ -158,6 +158,15 @@ failure is a value that is accepted but silently ignored. Ask what observable re
 proves the intended effect. [Development](docs/development.md) defines validation by
 change scope; avoid repeated full suites after checks pass without a new reason.
 
+Local lint matches CI only from the locked environment; any other torch gives
+different basedpyright findings in both directions. Per machine, then per worktree:
+
+```bash
+UV_PROJECT_ENVIRONMENT="$LINT_VENV_DIR" uv sync --locked --extra dev --extra cpu --no-install-project
+"$LINT_VENV_DIR/bin/python" setup.py build_ext --inplace    # unbuilt extensions do not resolve
+CAE_LINT_VENV="$LINT_VENV_DIR" ./scripts/lint.sh            # bare run; judge by exit code
+```
+
 Delegate bounded independent work when useful, with clear ownership and enough
 context to judge it. Inherit the selected model unless the task warrants another;
 there is no fixed worker count or requirement to predesign every implementation.

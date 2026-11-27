@@ -155,6 +155,53 @@ def test_cpu_wheel_requirement_rejects_cuda_build(monkeypatch: pytest.MonkeyPatc
     validate.preflight("lint", "magic", False)
 
 
+def _fake_lint_venv(root: Path, torch_version: str) -> Path:
+    """A stand-in environment whose tools record how lint.sh called them."""
+    bin_dir = root / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python").write_text(f"#!/bin/sh\necho {torch_version}\n")
+    for name in ("ruff", "basedpyright", "vulture"):
+        (bin_dir / name).write_text(f'#!/bin/sh\necho "$0 $*" > "{root}/{name}.argv"\n')
+    for path in bin_dir.iterdir():
+        path.chmod(0o755)
+    return root
+
+
+def _run_lint(venv: Path | None, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {key: value for key, value in os.environ.items() if key != "CAE_LINT_VENV"}
+    if venv is not None:
+        env["CAE_LINT_VENV"] = str(venv)
+    return subprocess.run(["bash", "scripts/lint.sh", *args], cwd=validate.ROOT, env=env,
+                          capture_output=True, text=True, check=False, timeout=120)
+
+
+def test_lint_venv_supplies_the_tools_and_basedpyrights_interpreter(tmp_path: Path) -> None:
+    pin = validate.ROOT.joinpath("pyproject.toml").read_text().split('cpu = ["torch==')[1].split('"')[0]
+    venv = _fake_lint_venv(tmp_path / "pinned", f"{pin}+cpu")
+    result = _run_lint(venv, "tests/test_param_count.py")
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Every tool is the environment's own, and basedpyright resolves imports from it.
+    for name in ("ruff", "basedpyright", "vulture"):
+        assert (venv / f"{name}.argv").read_text().startswith(f"{venv}/bin/{name} "), name
+    assert f"--pythonpath {venv}/bin/python tests/test_param_count.py" in (venv / "basedpyright.argv").read_text()
+    assert f"lint environment (CAE_LINT_VENV): python={pin}+cpu torch={pin}+cpu pyproject_pin={pin}" in result.stdout
+    assert "WARNING" not in result.stderr
+    # Another torch is named, loudly, because its findings are not CI's.
+    other = _fake_lint_venv(tmp_path / "other", "2.10.0+cu128")
+    result = _run_lint(other, "tests/test_param_count.py")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"WARNING: lint is NOT using the pinned torch (2.10.0+cu128 here, {pin} in pyproject.toml)" in result.stderr
+
+
+def test_lint_venv_without_the_tools_stops_before_linting(tmp_path: Path) -> None:
+    venv = _fake_lint_venv(tmp_path / "partial", "0")
+    (venv / "bin/basedpyright").unlink()
+    result = _run_lint(venv, "tests/test_param_count.py")
+    assert result.returncode == 2
+    assert "CAE_LINT_VENV has no executable bin/basedpyright" in result.stderr
+    assert not (venv / "ruff.argv").exists()
+
+
 @pytest.mark.parametrize("matching_prefix", [False, True])
 def test_lint_checks_environment_prefix_before_launching_tools(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
