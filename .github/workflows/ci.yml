@@ -118,6 +118,21 @@ jobs:
         run: |
           echo "test-shard result: $SHARDS_RESULT"
           [ "$SHARDS_RESULT" = "success" ]
+      # A shard phase that selects no test passes (some shards hold no file of
+      # one phase). If the `serial` marking ever broke, every serial phase
+      # would be empty and its tests would run under xdist instead, green.
+      - name: Download the shards' test reports
+        if: needs.classify.outputs.records_only != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cpu-test-results-shard-*
+          path: shard-reports
+      - name: Require the serial phase to have run tests
+        if: needs.classify.outputs.records_only != 'true'
+        run: |
+          n=$(cat shard-reports/*/cpu-serial.xml | grep -o '<testcase ' | wc -l)
+          echo "serial-phase test cases across the shards: $n"
+          [ "$n" -gt 0 ]
       - uses: actions/checkout@v4
         if: needs.classify.outputs.records_only == 'true'
       - uses: actions/setup-python@v5

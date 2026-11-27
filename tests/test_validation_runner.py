@@ -306,6 +306,15 @@ def test_ci_shards_the_cpu_suite_and_the_required_check_needs_every_shard() -> N
     assert gate["env"] == {"SHARDS_RESULT": "${{ needs.test-shard.result }}"}
     assert '[ "$SHARDS_RESULT" = "success" ]' in gate["run"].splitlines()
     assert "continue-on-error" not in gate
+    # After the gate, the shards' reports must show the serial phase ran tests.
+    download, serial = test["steps"][1:3]
+    assert download["if"] == serial["if"] == gate["if"]
+    assert download["uses"].startswith("actions/download-artifact@")
+    assert download["with"] == {"pattern": "cpu-test-results-shard-*", "path": "shard-reports"}
+    assert "shard-reports/*/cpu-serial.xml" in serial["run"]
+    assert '[ "$n" -gt 0 ]' in serial["run"].splitlines()[-1]
+    assert "continue-on-error" not in download
+    assert "continue-on-error" not in serial
     assert "continue-on-error" not in test
 
 
@@ -456,7 +465,7 @@ def pytest_collection_modifyitems(items):
 @pytest.mark.parametrize(
     ("lone_xdist_file", "serial_passes", "expected"),
     [
-        # tests/test_run_bootstrap.py: a test file that defines no test.
+        # A test file that defines no test (tests/test_run_bootstrap.py was one).
         ('"""Helpers only."""\n', True, 0),
         ("import pytest\n\n\n@pytest.mark.slow\ndef test_x():\n    pass\n", True, 0),
         ('import pytest\n\npytest.skip("not here", allow_module_level=True)\n', True, 0),
@@ -468,8 +477,8 @@ def test_a_file_with_no_runnable_test_cannot_fail_its_shard(
 ) -> None:
     """Real pytest runs: the only xdist-phase file of a shard selects nothing.
 
-    This failed shard 8/10 once a new file moved the partition so that the
-    test-less tests/test_run_bootstrap.py was the shard's one non-serial file.
+    This failed shard 8/10 once a new file moved the partition so that
+    tests/test_run_bootstrap.py, then test-less, was the shard's one non-serial file.
     """
     monkeypatch.delenv("CAE_TEST_WORKERS", raising=False)
     (tmp_path / "tests").mkdir()
@@ -592,6 +601,20 @@ def test_one_process_cpu_run_keeps_a_single_unsplit_command(
     assert validate.main(["cpu", "--threads", "2", "--report-dir", str(tmp_path)]) == 0
     (command,) = seen
     assert command[command.index("-m", 3) + 1] == "not slow"
+
+
+def test_known_files_keep_their_phase_and_the_marker_reaches_their_tests(request: pytest.FixtureRequest) -> None:
+    """An empty serial phase passes in a shard, so the marking must not rot unseen."""
+    from tests.serial_phase import runs_in_serial_phase
+
+    tests = validate.ROOT / "tests"
+    for name in ("test_uci_degrade_gaps_subprocess.py", "test_gpu_gate_take_effect.py",
+                 "test_validation_runner.py", "test_selfplay_label_overlap.py"):
+        assert runs_in_serial_phase(tests / name), name
+    for name in ("test_simple_rl_collect_game_resume.py", "test_param_count.py"):
+        assert not runs_in_serial_phase(tests / name), name
+    # This file starts processes; tests/conftest.py must have marked this test.
+    assert request.node.get_closest_marker("serial") is not None
 
 
 def test_serial_phase_rule_and_explicit_list(tmp_path: Path) -> None:
