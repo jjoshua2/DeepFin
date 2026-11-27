@@ -598,16 +598,19 @@ interval is the result. Look 2 was not played. The 16-sim file is
 **What this licenses.**
 
 - No claim that the deep/fast value head differs from the stock one, in either direction. The paired contrast at
-  this size detects about 17 Elo (power table above); the interval excludes a D value advantage above +14 and a C
-  advantage above +9.
+  this size detects about 17 Elo (power table above); the interval excludes a D value advantage above +14.4 and a C
+  advantage above +8.9. Realised arm-control correlation: +0.028 at 64 sims, +0.098 at 16.
 - Neither value head, placed on the parent's policy, is shown to gain or to lose against the parent.
 - Descriptive only: the full nets read C −5.81 and D −3.34 against the same parent at 12,800 games, and the
   head-swap points are −3.69 and −0.98. The points are compatible with the value head carrying most of each net's
-  deficit and with it carrying none; this step cannot separate them.
+  deficit and with it carrying none; this step cannot separate them. The full-net and head-swap readings used
+  different opening sets (seed 2026112711 and 2026112721), so the four points are not paired.
 - Descriptive only: D − C is positive in the full-net match (+2.5), here at 64 sims (+2.7) and at 16 sims (+10.2).
-  None is resolved, the three share the same two nets, and the 16-sim reading decides nothing.
+  None is resolved; the three share the same two nets and the two head-swap readings share openings, so this is
+  not three independent replications, and the 16-sim reading decides nothing.
 
 hC's banked games are Step 2's control. Step 2 was launched at 18:23:08 EST (pid in `step2/step2.pid`, launcher
 `1a00398c`). Measured before it: all 2,785,627 rows of pool_C carry a stored search WDL (`has_search_wdl`, 141
 shards, read on the CPU), so the search-only arm's effective search share is 1.0 and the outcome-fallback confound
-is empty.
+is empty (the trainer sets the dampen knobs, `wdl_terminal_outcome_plies` and `sf_wdl_frac` to 0 at the pin,
+`simple_rl/learn.py:1078-1081`, so no taper moves search weight to the outcome).
