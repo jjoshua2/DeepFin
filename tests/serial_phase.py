@@ -1,8 +1,7 @@
 """Which test files run in the validator's one-process phase.
 
-tests/conftest.py marks their tests ``serial``; scripts/validate.py reads the
-same rule to know which phases a shard's files occupy. Standard library only:
-the validator imports this before any test dependency is checked.
+tests/conftest.py marks their tests ``serial``; scripts/validate.py selects
+the phases by that marker. Standard library only.
 """
 
 from __future__ import annotations
