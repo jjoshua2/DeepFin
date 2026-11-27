@@ -555,7 +555,8 @@ to correct phase A's pid file by hand). That 13-of-13 pass predates this change.
 the final launcher (re-pinned, `ca2db464`) and passed 13 of 13; see the collector OOM addendum. The launcher is not listed in `SHA256SUMS` (it pins that file's sha256), so the operator checks
 it directly before launch: `sha256sum ~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh`
 must print `ca2db464588f393a8bfcabed19cdee27b1630f3465ca9586c28be7d6fef99dd8` (the re-pinned launcher, collector OOM
-addendum); any other value means do not launch.
+addendum); any other value means do not launch. **Superseded 2026-11-27:** the launcher that ran is
+`12145ed8…` (see "Phase A readout and pool-tool revision" at the end of this record).
 Launch: `PB=~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb; setsid nohup bash $PB/launch_phase_b.sh >
 $PB/phase_b.log 2>&1 < /dev/null &` (no `echo $!`); the pid is in `$PB/phase_b.pid` once the refusals pass. Stop:
 `kill -TERM $(cat $PB/phase_b.pid)`, then check `ps` for leftover Stockfish groups. **Phase A**: this record never
@@ -726,3 +727,73 @@ games per process.
 `setsid nohup bash $S2/launch_phase_a.sh >> $S2/phase_a.log 2>&1 < /dev/null &`
 (no `echo $!`; the launcher writes `$S2/phase_a.pid`). Stop: `kill -TERM $(cat $S2/phase_a.pid)`, then check `ps` for
 leftover Stockfish groups.
+
+## Phase A readout and pool-tool revision (2026-11-27)
+
+**Phase A is complete** (`stage2/phase_a.exit`: `0 2026-11-27T04:34:35-05:00`, launcher `2df225b4`, pin
+`d08b03adb`). Steps: `collect_C` 18:02 to 23:18 EST, `collect_D` 23:22 to 03:50, `collect_Dtopup` 03:51 to 04:34.
+From `stage2/cost.json`:
+
+| arm | games | stored rows | active GPU seconds |
+|---|---|---|---|
+| C (64 sims, every position stored) | 27,955 | 2,785,627 | 18,374.9 |
+| D (80 sims on 25% of positions, 16 on the rest; `run_D` + `run_Dtopup`) | 39,467 + 6,251 = 45,718 | 967,336 + 153,110 = 1,120,446 | 15,862.7 + 2,534.6 = 18,397.3 |
+
+`ratio_D_over_C` = 1.0012, inside the registered [0.9, 1.1] band, so Readout A is readable on cost. Every
+`collect_*.gates.json` has `"fail": []`. D's stored share was 0.2473 (main) and 0.2468 (top-up), and its mean root
+prelude visits 25.8. **Take-effect of the collector fix:** no OOM; the `rss` lines show the residual growth the OOM
+addendum left untraced (the top-up reached about 7.2 GB per process after 43 minutes), which did not threaten the run.
+
+**Phase B's first launch failed at `pool_D`, and the GPU sat idle from 04:38 to 09:11 EST.** Launched 04:35:32 EST
+(pid 3364351, launcher `ca2db464`); `pool_C` passed; `pool_D` exited 1 at 04:38:42 with
+`pool_collect: REFUSED P4: game id 2587986689877266027 is in both run_D and run_Dtopup`. The coordinator's waiter
+watched `phaseb/phase_b.exit`; the launcher writes `phaseb/exit`, so the stop went unnoticed until 09:03.
+
+**Cause.** A game id is not a counter. `selfplay/finalize.py:_stable_game_id` hashes the opening source, the start
+FEN, the move list, the result and the ply count, so the same game played twice has one id. One identical game (opening
+`bab00b2e7d561443`, 28 plies, drawn) was played in both D collections (3 stored rows in `run_D`, 2 in `run_Dtopup`;
+the row counts differ because which positions get the deep search is random). The seeds were disjoint as registered
+(2026112702 and 2026112802). The trainer reads `game_id` only for the holdout split and the value-row choice, so both
+copies fall on the same side of the holdout and nothing else changes.
+
+**Deviation: `phaseb/pool_df.py` P4, revision 2.** The registered rule was "a game id in two sources refuses". The rule
+that ran: a game id in two sources is **kept and counted** (`pool.repeated_game_ids`: count and ids, in the pool's
+manifest) if and only if the two ledger lines agree on `opening_id`, `uci`, `result` and `total_plies` and none of the
+four is missing. A game id shared by two different games still refuses, and so does a repeat within one source. Both
+copies' rows stay in the pool; shard copies stay byte-identical. The alternative, dropping one copy, would have meant
+rewriting a sealed shard for two rows of 1,120,446.
+
+| file | before | after |
+|---|---|---|
+| `phaseb/pool_df.py` | `f6cb6245` | `4c0d44117a1ac21ac8e551904794c66c46b242cbc1f58035ef3b0110a3fa9770` |
+| `phaseb/SHA256SUMS` | `f4f722c9` | `10e8306b4ac5583080f97a5ebed6b03a332b12a04d2bdf790973eb81c77578e4` |
+| `phaseb/launch_phase_b.sh` (only its `SUMS_SHA` line changed) | `ca2db464` | `12145ed86229a09ee21b667f37b0e4d3bb6bd2948db1318d926d49dcdaabff9e` |
+
+The earlier files are kept beside the new ones as `*.pre_p4rev2*`. Evidence, both run with the GPU idle and no mutant
+series: `phaseb/test/pool_df_fixtures.p4rev2.out`, 12 of 12 (new cases: the identical game in both sources is kept and
+counted; a different game under one id refuses); `phaseb/test/harness_phase_b.p4rev2.out`, 13 of 13 on launcher
+`12145ed8`.
+
+**Relaunch (coordinator, disclosed: before this addendum merged).** `move_aside_b.sh pool_D` renamed the failed step's
+four files. `pool_C` was complete under the old launcher hash, which the new launcher would refuse as "recorded inputs
+differ", so the coordinator renamed its seven paths aside by hand (stamp `20261127T141125.092121621Z.manual`, written
+to `phaseb/resume.log`). Nothing was deleted. Phase B was launched at 09:11:32 EST, pid 3414809. Both pool steps
+exited 0:
+
+| pool | games | rows | trainable rows | planned updates | snapshots |
+|---|---|---|---|---|---|
+| `pool_C` | 27,955 | 2,785,627 | 2,648,696 | 5,174 | 2,587 and 5,174 |
+| `pool_D` | 45,718 | 1,120,446 | 1,064,425 | 2,079 | 1,040 and 2,079 |
+
+`pool_D` records `repeated_openings` 1,635 and `repeated_game_ids` 1. Each row is used once (`--presentations 1`), so
+D takes 0.40 of C's updates at the same learning rate: that is the registered equal-GPU-hours comparison, not an
+added difference.
+
+**Confound added.** Four game ids are shared between `run_D` and `run_C`, and one between `run_Dtopup` and `run_C`
+(identical short games under both search settings). The two arms' pools are never mixed, so this changes no
+readout; it is stated because it shows identical games recur at this scale, and any later pool across arms or
+generations meets the same rule.
+
+**Stop / relaunch** are unchanged except for the hash to check:
+`sha256sum ~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/launch_phase_b.sh` must print
+`12145ed86229a09ee21b667f37b0e4d3bb6bd2948db1318d926d49dcdaabff9e`. The run's exit marker is `phaseb/exit`.
