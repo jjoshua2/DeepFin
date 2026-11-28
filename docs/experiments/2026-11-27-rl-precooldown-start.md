@@ -1,7 +1,8 @@
 # RL: start from before the SL learning-rate drop (pre-registration; Stages 0–1 launch-ready, Stage 2 design only)
 
 Date: 2026-11-27. Status: registered (revision 2, after the non-author review of #1555), plus **Amendment 1
-(Stage 1 on banked rows)**. Nothing launched.
+(Stage 1 on banked rows)** and **Amendment 2 (Stage 1 scores max-plies games as draws, the value follow-up's
+rule)**. Stage 1 not launched.
 - **Stage 0** launches when this record is merged, the coordinator writes `stage0/STAGE0_GO`, and a `pc0` release line
   is written in a gap when no value follow-up launcher is live. "Bank and launchers" says how the guard prevents
   overlap and how to avoid blocking Step 3. Amendment 1 does not change Stage 0, its launcher or its pins.
@@ -347,7 +348,8 @@ Look 2 adds `--look 2026112812` with the `_2_` logs, written to `*_looks12.json`
 ### Launch (Amendment 1)
 
 1. **Check:** `sha256sum ~/chess-artifacts/operations/rl-precooldown-start/stage1/launch_stage1_banked.sh` must print
-   `2e76e13351f53df655b3a71232252ff04f0febda65fa5ddd184a02b012130511`.
+   `9191300c32d11f2c7e6c8fa3f94e36ec23e05b13a26f166b40a957e11f1625a8` (Amendment 2; Amendment 1's file was
+   `2e76e133…`).
 2. **Prerequisites:**
    - `stage0/STAGE0_DONE` and `stage0/P.json` exist;
    - `stage1/banked/STAGE1B_GO` is written by the coordinator;
@@ -415,6 +417,103 @@ still [`1497e23c`]).
 - **Result:** `TOTAL PASS=18 WRONG=15`. The launcher stops at `ref_C`'s `seed_is_the_pool_seed` check, so no arm
   trains (`test/mutant_banked_seed_SEED_COLLECT.out` [`0f9d16e2`]).
 - In a real launch, the pin's `precheck_source` would also refuse it, because seed is not exempt.
+
+## Amendment 2 (2026-11-28): max-plies games are scored as draws in Stage 1
+
+**Why.** Value follow-up Step 2 exited 1 after 2 h of a 4,800-game seat. One game reached `--max-plies 600` unresolved,
+and the seat ran under `--on-max-plies abort`. This bank's `common/run_v2_match.sh` carries the same flag, and Stage 1
+plays up to about 40k games. Amendment 2 ports **the value follow-up's own rule, unchanged** (its record's
+"Amendment 1: max-plies draws", PR #1557, under review when this was written). If that review changes the rule, this
+amendment follows it in an addendum.
+
+**The rule.**
+- **Every Stage 1 seat** is played by **`common/run_v3_match.sh`** [`68856fbc`], the value follow-up's file byte for
+  byte. It differs from `run_v2_match.sh` in two ways:
+  - **`--on-max-plies draw`.** A game that reaches 600 plies unresolved, by rules or Syzygy, is written and scored as
+    a draw with termination `max_plies`. The pin's arena counts it in the results row's `max_plies_unresolved`.
+  - **It refuses (95) a seat that has an abort sidecar (`.games.jsonl.unresolved.jsonl`) beside it.**
+- **Every Stage 1 read** goes through **`common/contrast_pc_mp.py`** [`f241050a`], which is `contrast_pc.py` with the
+  value follow-up's amended reader. That reader, its `contrast_v2.py` [`ab514cae`], is copied byte for byte as
+  `common/contrast_v2mp.py`. It is renamed because the unamended `contrast_v2.py` is pinned by Stage 0.
+  - The header comparison leaves out `on_max_plies`.
+  - Each run's results-row policy must be abort or draw and equal its header's.
+  - The log's `max_plies` games must equal the row's `max_plies_unresolved`, which must be 0 under abort.
+  - `max_plies_aborts_banked` must be 0.
+  - Every run's `{on_max_plies, max_plies_draws, games}` is reported under `max_plies`.
+- **The bound.** If any seat's max-plies draws exceed **0.25 % of its games**, the read is written to `OUT.HOLD.json`
+  instead of `OUT` and exits 3. The launcher then writes `HOLD_MAXPLIES`, and the owner decides.
+  - The bound is 4 of a 1,600-game look-1 seat, 12 of a 4,800-game look-2 seat, and 2 of an 800-game 16- or 1-sim
+    seat.
+- **Wiring.** `common/lib_pc_mp.sh` [`cb5870bd`] is sourced after `lib_pc.sh`. It replaces `seat()` (`run_v3_match.sh`,
+  and the PARTIAL message names the sidecar) and adds `read_c`, which maps exit 3 to `HOLD_MAXPLIES`. Nothing else in
+  the launcher changed.
+
+**The size.** One max-plies draw moves its seat's E by at most 0.5 / games × 694.87 Elo, and the seat-balanced arm
+estimate by half that.
+
+| Seat size | One draw moves the seat's E by at most | At the bound |
+|---|---|---|
+| 4,800 games | 0.07 Elo | 12 draws, ≤ 0.87 Elo on the seat, ≤ 0.43 on the arm |
+| 1,600 games | 0.22 Elo | 4 draws, ≤ 0.87 Elo on the seat, ≤ 0.43 on the arm |
+
+Both are far inside the ±8.5 / ±4.3-Elo per-arm half-widths. Above the bound, the games are not a rare tail and the
+owner decides.
+
+**Stage 0 is unchanged and stays on `abort`, as registered.** It was live when this amendment was written. No file in
+`SHA256SUMS` [`80965d6f`] and nothing `launch_stage0.sh` uses was modified.
+- **Stage 1 reads no Stage 0 seat.** It takes only `stage0/P.json`.
+- **The amended reader still accepts abort seats with 0 unresolved** together with draw seats. The harness checks this
+  on a mixed look.
+- **If a Stage 0 seat aborts on a max-plies game, the registered recovery** is the PARTIAL path (87):
+  1. The owner moves that seat's four files, plus its `.unresolved.jsonl` sidecar, into a new `stage0/aborted_*` dir.
+  2. The owner relaunches `launch_stage0.sh` unchanged. That replays the seat at the same seed and can hit the same
+     game again.
+
+  Running Stage 0's seats with `draw` would need its own addendum. Nothing here changes Stage 0.
+
+**Pins.**
+- **New launcher sha256: `9191300c32d11f2c7e6c8fa3f94e36ec23e05b13a26f166b40a957e11f1625a8`.** Amendment 1's launch
+  check now expects this value. The only change from Amendment 1's `2e76e133…` is the `SHA256SUMS.banked` pin, the
+  `lib_pc_mp.sh` source line, `read_c` in place of `contrast_pc.py`, and the header comment.
+- **`SHA256SUMS.banked` [`cf926c1c`]** lists `ref_banked_pc.py`, `run_v3_match.sh`, `contrast_v2mp.py`,
+  `contrast_pc_mp.py` and `lib_pc_mp.sh`.
+- `SHA256SUMS` is unchanged. `SHA256SUMS.launch` is now [`e810ad0d`].
+
+**Launch and stop are unchanged:**
+- launch: `PC=~/chess-artifacts/operations/rl-precooldown-start/stage1; setsid nohup bash $PC/launch_stage1_banked.sh >> $PC/banked/stage1b.log 2>&1 < /dev/null &`
+- stop: `kill -TERM $(cat ~/chess-artifacts/operations/rl-precooldown-start/stage1/banked/stage1b.pid)`
+
+The new refusal is `HOLD_MAXPLIES` (81 on relaunch).
+
+**Harness.** `test/harness_banked.sh` [`98704f69`] passes 40 of 40: Amendment 1's 33, plus 7 new checks.
+- **New checks:**
+  - **Over the bound:** 5 max-plies draws in a 1,600-game seat give exit 3, `HOLD_MAXPLIES`, and `OUT.HOLD.json` naming
+    that seat. No `OUT` is written and the E2 half never starts. A relaunch is refused with 81.
+  - **Every Stage 1 results row records `on_max_plies` = draw,** across every look and sims.
+  - **Draws are read and counted per seat.** 4 draws is exactly the bound and does not hold. 1 draw is counted in the
+    `own` read; the other seats read 0.
+  - **A mixed look reads.** An abort seat pair with 0 unresolved, Stage 0's form, is read with draw seats, and each
+    run's policy is reported.
+  - **A row/log count mismatch is refused** (2).
+  - **`run_v3_match.sh` refuses a seat with an abort sidecar** (95) and plays nothing.
+- **Harness fixes:**
+  - `test/fake_pc.py` [`ade63d5d`]'s arena now honours `--on-max-plies`. `FAKE_MAXPLY` makes games of a named seat
+    reach max plies: they become draws under draw, and under abort the run writes a sidecar and exits 1.
+  - Both harnesses now copy only the launchers, never a stage dir's run state, because the real Stage 0 was live while
+    they ran.
+- **The original `test/harness_pc.sh` [`fc6f83f4`]** was re-run after these changes: 57 of 57, with output byte-identical
+  (`harness_pc.out` still [`1497e23c`]). `test/harness_banked.out` is [`9a183e6b`].
+
+**Mutant: the draw flag ignored.** `run_v3_match.sh`'s `--on-max-plies draw` was set back to `abort` on a scratch copy
+of the bank, with `SHA256SUMS.banked` and its pin re-made in the copy.
+- **Result:** `TOTAL PASS=22 WRONG=18` (`test/mutant_banked_maxplies_abort.out` [`d707ce19`]). `fC64_1_A`, which has 4 max-plies
+  games, aborts, so the P half never reads. The results-row check reads `False`.
+
+**Not verifiable without the GPU:**
+- the pin arena's real `max_plies_unresolved` / `max_plies_aborts_banked` / header `on_max_plies` on a real game. The
+  fields were read in the pin's `scripts/arena_standard.py`, and the value follow-up's Step 2 reruns exercise them
+  first;
+- how often 600 plies is reached at these arms' strength.
 
 ## Stage 1 as registered in revision 2 (SUPERSEDED by Amendment 1: fresh collections; kept for the record, not run)
 
