@@ -1,9 +1,13 @@
-# RL: start from before the SL learning-rate drop (pre-registration; Stages 0–1 launch-ready, Stage 2 design only)
+# RL: start from before the SL learning-rate drop (Stage 0 read: P = M; Stage 1 launch-ready, not launched; Stage 2 design only)
 
 Date: 2026-11-27. Status: registered (revision 2, after the non-author review of #1555), plus **Amendment 1
 (Stage 1 on banked rows)** and **Amendment 2 (Stage 1 scores max-plies games as draws, the value follow-up's
-rule)**. Stage 1 not launched.
-- **Stage 0** launches when this record is merged, the coordinator writes `stage0/STAGE0_GO`, and a `pc0` release line
+rule)**.
+- **Stage 0: DONE and read (2026-11-28): P = M** (step 475,738), 64-sim −44.6 [−60.2, −28.9] vs the SL base; E1
+  −155.2 [−169.0, −141.4]. See "Stage 0 verdict".
+- **Stage 1 (banked): launch-ready at launcher `9191300c…25a8`, NOT launched.** Per the guard it follows value
+  follow-up Step 2 (relaunched 2026-11-28 00:55 EST).
+- **Stage 0 (as registered; done)** launches when this record is merged, the coordinator writes `stage0/STAGE0_GO`, and a `pc0` release line
   is written in a gap when no value follow-up launcher is live. "Bank and launchers" says how the guard prevents
   overlap and how to avoid blocking Step 3. Amendment 1 does not change Stage 0, its launcher or its pins.
 - **Stage 1 (Amendment 1)** trains all four arms on the banked rows of deep/fast phase B's `pool_C`, with no
@@ -170,6 +174,96 @@ game. The 1-sim rate is the value follow-up's ≈ 0.05 h per 3,200 games.
 | 64 sims, 2 × 1,200 games | ≈ 0.48 h (an upper bound: lopsided games end sooner) |
 | 1 sim, 2 × 1,200 games | ≈ 0.04 h |
 | **Total** | **≈ 0.55 h** |
+
+## Stage 0 verdict (read 2026-11-28)
+
+**Run.**
+- Launched 2026-11-28 00:18:47 EST, launcher pid 3567884, launcher sha256
+  `c09a90a17ec7a4dd79f6c5477635ee3f5f9087c34bcefc8e3fc4b3592a8db49e` (from `stage0/resume.log` and
+  `stage0/inputs.txt`).
+- Exit 0 at 00:54:02 EST, then `STAGE0_DONE` (`stage0/exit`).
+- 35 min wall, against an estimate of ≈ 0.55 GPU-h. Each 64-sim seat of 600 games took 412–428 s, about 0.70 s per
+  game; each 1-sim seat took 41–52 s.
+
+**Settings, as registered.**
+- Pin `d08b03adb`, `matched_sims`, temperature 0.1, no Gumbel noise.
+- The pilot's `eval.pgn` (sha256 `067675c2…`), 16 opening plies, max plies 600 with abort.
+- Seed 2026112801, and 600 games per seat (two seats, 1,200 games per rung) over the same 300 opening keys.
+- **Every one of the 8 seats:** 600 games, `max_plies_unresolved` 0, `max_plies_aborts_banked` 0. Terminations were by
+  rules or Syzygy only. The longest game was 252 plies (`lE164_1_A`).
+
+**Per seat.** Seat A has the rung as the candidate and seat B has the SL base as the candidate. W / D / L is from the
+candidate's side, counted from each seat's game log (the results rows carry score and pentanomial, not W/D/L).
+
+| Seat | Sims | Candidate | W / D / L | Score |
+|---|---|---|---|---|
+| `lE164_1_A` | 64 | E1 | 80 / 186 / 334 | 0.288 |
+| `lE164_1_B` | 64 | SL base | 349 / 184 / 67 | 0.735 |
+| `lM64_1_A` | 64 | M | 141 / 235 / 224 | 0.431 |
+| `lM64_1_B` | 64 | SL base | 223 / 225 / 152 | 0.559 |
+| `lE11_1_A` | 1 | E1 | 410 / 62 / 128 | 0.735 |
+| `lE11_1_B` | 1 | SL base | 142 / 58 / 400 | 0.285 |
+| `lM1_1_A` | 1 | M | 213 / 25 / 362 | 0.376 |
+| `lM1_1_B` | 1 | SL base | 361 / 33 / 206 | 0.629 |
+
+**Ladder** (`contrast_v2.py --control none --base E2`, seat-balanced per opening key, K = 300, linear map at 694.87
+Elo per unit).
+
+| Rung | 64 sims (decides) | 1 sim (reported only) |
+|---|---|---|
+| E1 (step 340,168) | **−155.2 [−169.0, −141.4]** | +156.3 [+137.1, +175.6] |
+| M (step 475,738) | **−44.6 [−60.2, −28.9]** | −88.0 [−108.0, −68.0] |
+
+**The registered rule** (`pick_p.py`: the first rung, highest rate first, whose 64-sim point is ≥ −75) gives:
+- **E1 fails** (−155.2 < −75);
+- **M qualifies** (−44.6 ≥ −75);
+- **P = M, not `beyond_threshold`** (`stage0/P.json`).
+
+This was the prior's expected pick. Stage 1 uses M at its own saved rate, 7.4220002861554846e-06 (group 0 1.4844e-4).
+
+Per the record's note on the linear map, the logistic Elo at E1's distance is about 8 Elo larger in magnitude. That
+does not change the pick.
+
+**What this establishes.**
+- **A strength ladder against the SL base at 64 sims, on one seed.** E1 sits about 155 Elo below the SL base and M
+  about 45 below it.
+- **The P choice for Stage 1.**
+
+**What it does not establish.**
+- **Any learning-rate result.** No net was trained. The ladder says nothing about whether a higher rate learns more
+  from RL rows: that is Stage 1's question, and only Stage 2 asks whether anything ends above the SL base.
+- It does not show that M's deficit is the cost of its higher rate. M is also earlier in epoch 2's rows.
+
+**Consistent with the banked figure.** "Epoch 2 beat epoch 1 by +153.44 [+123.98, +185.14] at 64 sims, 400 games"
+(`~/chess-artifacts/operations/epoch2-vs-epoch1-fixed200-20261110-88e41e4ef670d523fc1951e2fbb83d8c/result.jsonl`
+[`5d4ba512`]).
+- That figure is cited in this record's "Why", but it had **no evidence-log row**. A row is added with this readout.
+- It ran a different instrument: seed 42, git `7775477b`, max plies 20,000.
+- E1's −155.2 [−169.0, −141.4] here is a consistent replication of it at 3× the games.
+
+**Observation, unexplained, with no causal claim: the 1-sim ladder inverts for E1.**
+- At 1 sim, E1 beats the SL base by +156.3, while M loses by −88.0. Ordered by step along the SL trajectory, the 1-sim
+  reading is E1 +156, M −88, E2 0. That is non-monotone, and E1's sign is the opposite of its 64-sim sign.
+- **It is not a seat or sign error.** E1 scores 0.735 as the candidate, and the SL base scores 0.285 as the candidate.
+  The two seats agree.
+- Loop nets showed a related pattern earlier (gains at 1 sim, none at 64; evidence log, "Loop nets vs SL base at 1 /
+  4 / 16 / 64 sims"). That pattern does not explain this one.
+- **A read-only investigation of the 1-sim move rule is in progress.** Until it reports, the 1-sim column is reported
+  only and decides nothing.
+
+**Files** (full sha256):
+- `stage0/P.json`: `c14be5ca9024bb74a1371d08c0e315e57bbbc6ac20611eea6d1e875ab61955a2`
+- `stage0/ladder64.json`: `b3eef3205ec162284ec0f0f068c0fe26719a0d75182b969bb47315b5d8d83596`
+- `stage0/ladder1.json`: `278ccbb894cb14d7e23b9d7b86ec79bf9eeef153df6f3ce617919ee83c2a3eb1`
+- results rows:
+  - `stage0/arenas/lE164/results.jsonl`: `819bfe2f…`
+  - `lM64/results.jsonl`: `0e4ef730…`
+  - `lE11/results.jsonl`: `b79a7902…`
+  - `lM1/results.jsonl`: `69a3fecc…`
+
+**Next.** Stage 1 (banked, Amendments 1–2) is launch-ready at launcher `9191300c…25a8` and **not launched**. Per the
+guard, it follows value follow-up Step 2, which was relaunched at 00:55 EST: its `pc1` line is written only once no
+value follow-up launcher holds the GPU.
 
 ## Amendment 1 (2026-11-27): Stage 1 trains on banked rows
 
