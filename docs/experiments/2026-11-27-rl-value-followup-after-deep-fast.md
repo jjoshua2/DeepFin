@@ -614,3 +614,183 @@ hC's banked games are Step 2's control. Step 2 was launched at 18:23:08 EST (pid
 shards, read on the CPU), so the search-only arm's effective search share is 1.0 and the outcome-fallback confound
 is empty (the trainer sets the dampen knobs, `wdl_terminal_outcome_plies` and `sf_wdl_frac` to 0 at the pin,
 `simple_rl/learn.py:1078-1081`, so no taper moves search weight to the outcome).
+
+## Amendment 1: max-plies draws (2026-11-28)
+
+**What happened.** Step 2 exited 1 at 00:17:03 EST on 2026-11-28. The failure was in step `c64_2`, the control's look 2
+(hC at 64 sims, seed 2026112722, 4,800 games per seat):
+- Seat A finished with exit 0 (4,800 games, results row `on_max_plies` abort, 0 unresolved).
+- Seat B aborted after 2,418 games. One game (pair 884, half 0, kC vs kC + hC value) reached `--max-plies 600` without
+  a result by the rules or by Syzygy. Its final position is a queen ending, `8/1k6/3p3p/PPpP3P/1p3Q2/1P6/K1q5/8 w - - 4 309`.
+  Under `--on-max-plies abort` (`common23/run_v2_match.sh`) the arena refused to score it. It banked the game in
+  `hC64_2_B.games.jsonl.unresolved.jsonl` and wrote **no results row** for seat B.
+
+Every earlier step and seat is sealed (exit 0): both arms' training, fits, bakes, smokes, `h64_O`, `h64_S` and
+`read64_1`. Step 1's seats had 0 unresolved games.
+
+**Rejected options.**
+- **Replaying seat B from the same seed under `abort`.** Openings are a pure function of the seed and the game count
+  (`np.random.default_rng(seed)`, `scripts/arena_standard.py:3382` at the pin). The same generator is then passed into
+  the rolling loop (`rng=rng`, line 2777), which consumes it in batch order, and the loop is single-threaded. So a
+  same-seed, same-N replay repeats the same games up to GPU float non-determinism, and would probably reach the same
+  600-ply game again.
+  - The play is **not** a function of (seed, pair) alone. The 4-game smoke seats and the 1,600-game seats share seed
+    2026112721 and openings, but all 16 of the smoke games differ from their 1,600-game counterparts in moves and
+    length. Exact reproduction of one 600-ply game was not tested; it would need the GPU.
+  - Either way, `abort` remains the wrong policy for a seat that has to finish.
+- **Keeping the 2,418 finished games.** This is survivorship-biased: the missing half of the seat includes the long
+  games.
+
+**Registered handling.**
+1. **Set aside seat B.** Its five files (`hC64_2_B.games.jsonl`, `.games.jsonl.unresolved.jsonl`, `.pgn`, `.log`,
+   `.exit`) move into `step2/arenas/hC64/aborted_<UTC>/` with a `SHA256SUMS` of them. They are preserved, never
+   deleted, and excluded from every read. The operator does this by hand with the commands below. The launcher stops on
+   the PARTIAL seat (87) until it is done.
+2. **Every remaining seat of Steps 2 and 3 plays with `--on-max-plies draw`.** This includes the seat B replay, which
+   uses its registered seed 2026112722 and 4,800 games. The seats go through the new `common23/run_v3_match.sh`.
+3. **Sealed seats stay as they are.** They played under `abort` with 0 unresolved games, so `draw` would have given
+   them identical scores.
+4. **Each read reports, per seat:** `on_max_plies`, the number of `max_plies` draws, and the games.
+5. **HOLD bound:** a read HOLDs (`HOLD_MAXPLIES`, the launcher stops for the owner) if any seat's max-plies draws exceed
+   **0.25 % of its games**: more than 12 of 4,800, or more than 4 of 1,600.
+   - The observed rate here is 1 in about 20,000 games played so far by Steps 1–2. The evidence log's strict-Syzygy
+     rate is about 3e-4 per game.
+   - At 3e-4, a 4,800-game seat expects 1.4 draws and a 1,600-game seat 0.5. The bound sits about 9 Poisson standard
+     deviations above the 4,800-game mean.
+
+**Size.** One max-plies draw that "should" have been decisive moves its seat's score by 0.5 / 4,800 = 1.04e-4, which
+is **0.072 Elo** on that seat (slope 1600 / ln 10 per unit excess). Each arm's seat-balanced E and Δ average the
+seat with its partner, so the effect on them is **0.036 Elo**. At the bound (12 draws in one seat), the worst case
+is 0.87 Elo on that seat and 0.43 Elo on the arm, against a paired half-width of ±11.7 (look 1) and ±5.9 (final).
+
+**The draw takes effect at the pin (`d08b03adb`, `scripts/arena_standard.py`).**
+- `run_arena` validates the flag (3508–3512): `draw` without `--syzygy` exits.
+- For `draw`, it binds `on_max_plies` into the header settings and the resume fingerprint (3513–3518). An abort log and
+  a draw log can therefore never resume into each other.
+- In `play_paired_games_matched_sims_rolling` (2655–2707), a board with no rules result and no Syzygy result, whose
+  plies are ≥ `max_plies`, reaches `if tb_probe is not None and on_max_plies == ON_MAX_PLIES_ABORT` (2672).
+  - Under `draw` that branch is skipped. The game gets `res = "*"` and `termination = "max_plies"` (2681).
+  - `_record` (2605–2631) scores it 0.5 and writes it through `pgn_sink` as `"1/2-1/2"` with termination
+    `max_plies`. `pgn_sink` is `_on_game` (3888), whose `game_log.write_game(row)` puts it into the `.games.jsonl`.
+- The results row's `on_max_plies` is the policy applied (4546). `max_plies_unresolved` is counted from the game log's
+  latest rows with termination `max_plies` (`count_max_plies_games`, 3189–3209). `max_plies_aborts_banked` counts the
+  sidecar beside the log (3212).
+- The chunked loop has the same guard (2397, 2422). The rolling loop is the one `matched_sims` uses here (the abort
+  traceback names it: line 2704 in `play_paired_games_matched_sims_rolling`).
+
+**The readers.**
+- **`seat_state_v.py`** (Step 1's file, unchanged) checks the exit, the header seed, the game count, uniqueness, and
+  one results row with the right shas, `git_sha`, seed and value blocks. It reads neither argv nor `on_max_plies`.
+  - Sealed seats therefore stay DONE, not STALE.
+  - The replayed seat B is DONE once it finishes: a fresh log, one header, 4,800 games, one results row.
+  - Before the set-aside, seat B is PARTIAL (exit 1, no row), so the launcher stops with 87.
+- **`contrast_v2.py`** (amended):
+  - It drops `on_max_plies` from the header-settings comparison. The arena writes that key only for `draw`, so
+    without this change the abort-sealed seat A and the draw-replayed seat B would REFUSE.
+  - In its place, each run is checked three ways:
+    - the results row's `on_max_plies` is abort or draw and equals the header's (absent means abort);
+    - the log's count of games with termination `max_plies` equals the row's `max_plies_unresolved`, and is 0 under
+      abort;
+    - `max_plies_aborts_banked` is 0.
+  - It outputs `max_plies` per run, plus `max_plies_bound_frac`.
+  - Above the bound, it writes `<out>.HOLD.json` instead of `<out>` and exits 3. `lib23.sh`'s new `contrast()` turns
+    exit 3 into `HOLD_MAXPLIES`.
+  - Rerun on the real Step 2 look-1 logs, it reproduces the sealed `contrast64_looks1.json` exactly: rule, Δ and E
+    identical, with every seat reported as abort with 0 draws.
+- `contrast_v.read_log` scores a max-plies draw as `score_candidate` 0.5, like any draw.
+
+### Amendment 1 files (bank `~/chess-artifacts/operations/rl-value-followup/`)
+
+| File | sha256 | Change |
+|---|---|---|
+| `common23/run_v3_match.sh` | `68856fbc…` | new: `run_v2_match.sh` with `--on-max-plies draw`, and a refusal (95) while an abort sidecar is beside the seat |
+| `common23/lib23.sh` | `2dbda08d…` (was `647456a8`) | `seat()` calls `run_v3_match.sh`; reads go through `contrast()` (exit 3 → `HOLD_MAXPLIES`); the PARTIAL message names the sidecar |
+| `common23/contrast_v2.py` | `ab514cae…` (was `afabc94a`) | as above |
+| `SHA256SUMS.step23` | `9f7cc7b2d418af4a9647daf612876e8a4cfa0813842e2d3cb953d7f9c7cf837d` (was `e0ed8638`) | lists `run_v3_match.sh`; new lib23 / contrast_v2 hashes |
+| `step2/launch_step2.sh` | `2ba394c657b11705302b1217dd5f2edbbac0a58fe9aabd7362746248566a744b` (was `1a00398c`) | re-pinned `SUMS23_SHA`; `PRIOR_INPUTS_A1` |
+| `step3/launch_step3.sh` | `9c400db92dd53240a6b18c8dbc1ffd607abbdac340a80360fcf37fd35c17da33` (was `5ffac6f0`) | re-pinned `SUMS23_SHA` |
+
+- `run_v2_match.sh`, Step 1's files and every sealed seat are unchanged. The pre-amendment lib23, contrast_v2, both
+  launchers and `SHA256SUMS.step23` are kept byte for byte in `step2/test/pre_amend1/`.
+- **`inputs.txt`.** Step 2's `inputs.txt` records the launcher's sha256, so any new launcher would refuse with 84.
+  `launch_step2.sh` therefore accepts the pre-amendment line exactly once. If `inputs.txt` equals `PRIOR_INPUTS_A1`
+  (the recorded line, launcher `1a00398c`, sums `e0ed8638`), it moves the file to `inputs.pre_amend1.txt`, writes the
+  new line and logs this to `resume.log`. Any other difference still refuses with 84. This runs after every other
+  refusal.
+- **Relaunch.** It skips every step whose exit reads 0. `c64_2` reads 1, so it reruns: seat A is DONE (skipped, logged
+  "not replayed") and seat B is ABSENT after the set-aside, so it is replayed. Then `x64_O`, `x64_S` and `read64_2`
+  follow, and the rest of `run_all`.
+- **Step 3** sources the same `lib23.sh`, so all of its seats play through `run_v3_match.sh`.
+- **The existing release line stays valid:** `vstep2 idle_mib=3011 2026-11-27T18:22:59-05:00`. The guard checks the
+  idle baseline, not its age.
+
+### Amendment 1 operator commands
+
+Run these after this PR is merged, Stage 0 has released the GPU, and no Step 2 process is alive (`step2/step2.pid`
+names a dead pid; `ps` shows no arena naming this bank).
+```bash
+V=~/chess-artifacts/operations/rl-value-followup
+# 1. set seat B aside (preserved, never deleted, read by nothing)
+U=$(date -u +%Y%m%dT%H%M%SZ); X=$V/step2/arenas/hC64/aborted_$U
+mkdir "$X" && mv $V/step2/arenas/hC64/hC64_2_B.games.jsonl $V/step2/arenas/hC64/hC64_2_B.games.jsonl.unresolved.jsonl \
+  $V/step2/arenas/hC64/hC64_2_B.pgn $V/step2/arenas/hC64/hC64_2_B.log $V/step2/arenas/hC64/hC64_2_B.exit "$X"/ && (cd "$X" && sha256sum * > SHA256SUMS)
+# 2. check the launcher and the sums
+sha256sum $V/step2/launch_step2.sh $V/SHA256SUMS.step23   # 2ba394c6… / 9f7cc7b2…
+(cd $V && sha256sum -c --quiet SHA256SUMS.step23) && echo ok
+# 3. relaunch Step 2 (resumes at c64_2: seat A skipped, seat B replayed with --on-max-plies draw)
+setsid nohup bash $V/step2/launch_step2.sh >> $V/step2/step2.log 2>&1 < /dev/null &
+```
+Stop as before: `kill -TERM $(cat $V/step2/step2.pid)`. Step 3's launch command is unchanged
+(`sha256sum $V/step3/launch_step3.sh` must print `9c400db9…`).
+
+### Amendment 1 harness
+
+**`step2/test/harness_step23.sh` [`661909ea`] with `step2/test/fake23.py` [`b89a49f4`]: 36 of 36 pass**
+(`step2/test/harness_step23.out` [`eddcd23c`]; the pre-amendment 25-of-25 output [`67ad9ea8`] moved to
+`step2/test/pre_amend1/harness_step23.out`).
+- The fake bank is first built from `pre_amend1/`, and Step 2 runs with one fake unresolved game in `hC64_2_B`. The
+  fake arena follows the real abort semantics: earlier games are written, the game goes to the sidecar, there is no
+  results row, and the exit is 1. That reproduces the real state: launcher 1, `c64_2` 1, seat A 0, seat B 1, sidecar
+  1 row, no B row.
+- The amendment is then deployed over it as in the real bank.
+- **A second stated difference** from a real launch: the copy's `PRIOR_INPUTS_A1` is rewritten to the fake launch's
+  `inputs.txt`, because the fake pre-amendment launcher carries the stub-rewritten hashes.
+
+What it proves:
+- **The refusals on the amended launcher:** the existing ones, plus a tampered `run_v3_match.sh` (93), and an
+  `inputs.txt` that is not exactly the prior line (84, not migrated).
+- **Relaunch before the set-aside:** stops at PARTIAL (87) and plays nothing. The inputs are migrated once.
+- **The operator's set-aside commands**, run verbatim against the fake bank.
+- **Relaunch after the set-aside** (the same game unresolved again, plus 12 in `hO64_2_A`):
+  - it exits 0 with `STEP2_DONE`;
+  - all 15 steps before `c64_2` are skipped and seat A is "DONE: not replayed";
+  - no sealed seat is played again;
+  - every results row's argv carries `abort` for the 9 rows sealed before the amendment and `draw` for every other;
+  - the replayed B row has `on_max_plies` draw, `max_plies_unresolved` 1 and `max_plies_aborts_banked` 0, with the
+    game written as a `max_plies` draw;
+  - `contrast64_looks12.json` reports hC64_2_A abort 0, hC64_2_B draw 1, and hO64_2_A 12, which equals the bound and
+    is not over it;
+  - the set-aside files are intact.
+- **`contrast_v2.py`:** it reads abort-sealed A together with draw-replayed B, and refuses a draw row whose
+  `max_plies_unresolved` disagrees with its log.
+- **Step 3:** 5 draws in a 1,600-game seat HOLD the read: exit 3, `HOLD_MAXPLIES`, `.HOLD.json`, and no read file. The
+  relaunch is then refused (81).
+- The full Step 3 pass and its relaunch are as before.
+
+**Mutant (one).** `lib23.sh`'s `seat()` was changed back to `run_v2_match.sh`, meaning the draw flag is accepted in the
+record and ignored on the path. The harness then gives **21 pass, 15 WRONG**:
+- the replayed seat B aborts again (relaunch exit 1);
+- B is still PARTIAL on the next relaunch (87);
+- no look 1+2 read is made;
+- Step 3 never starts.
+
+With the amended file it passes 36 of 36.
+
+### Amendment 1: not verified (stated plainly)
+
+- **Whether a same-seed replay would reproduce the 600-ply game.** It needs the GPU. The handling does not depend on
+  it.
+- **The real arena under `--on-max-plies draw`** was not run. The take-effect proof above reads the code at the pin.
+  The fake arena only mirrors its semantics (header key, termination, row counters).
+- **Whether `draw` adds wall time.** A 600-ply game is one game of 4,800; the replay of seat B costs one seat, about
+  80 min (seat A of this look took 80 min).
