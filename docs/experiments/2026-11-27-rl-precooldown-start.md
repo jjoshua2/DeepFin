@@ -221,8 +221,9 @@ Elo per unit).
 
 This was the prior's expected pick. Stage 1 uses M at its own saved rate, 7.4220002861554846e-06 (group 0 1.4844e-4).
 
-Per the record's note on the linear map, the logistic Elo at E1's distance is about 8 Elo larger in magnitude. That
-does not change the pick.
+On the logistic map, E1's excess (−0.2233) gives −167.0 [about −184.6, −150.1]: about 12 Elo larger in magnitude than
+the linear −155.2. The record's earlier "about 8" was the figure at −139 linear. M reads −44.8 on the logistic map. The
+pick is unchanged.
 
 **What this establishes.**
 - **A strength ladder against the SL base at 64 sims, on one seed.** E1 sits about 155 Elo below the SL base and M
@@ -238,18 +239,47 @@ does not change the pick.
 (`~/chess-artifacts/operations/epoch2-vs-epoch1-fixed200-20261110-88e41e4ef670d523fc1951e2fbb83d8c/result.jsonl`
 [`5d4ba512`]).
 - That figure is cited in this record's "Why", but it had **no evidence-log row**. A row is added with this readout.
-- It ran a different instrument: seed 42, git `7775477b`, max plies 20,000.
-- E1's −155.2 [−169.0, −141.4] here is a consistent replication of it at 3× the games.
+- **It ran a different instrument.** Read from its results row:
+
+  | Setting | 11-10 match | Stage 0 |
+  |---|---|---|
+  | Move temperature | **0.0** | 0.1 |
+  | Openings | **200 FEN seeds** (`openings_kind` fen, no opening plies) | the pilot's `eval.pgn` at 16 plies |
+  | Prior temperature (`policy_temp`) | **1.5** | 1.0 |
+  | Syzygy path | a `syzygy_3-4-5-6` + `syzygy_6` pair | the production pair |
+  | Elo map | logistic (its interval is asymmetric) | linear |
+  | Seed / git / max plies | 42 / `7775477b` / 20,000 | 2026112801 / `d08b03adb` / 600 |
+
+- **Stage 0's E1 reading is consistent with it, not a replication on the same instrument.** On a common logistic map,
+  E1 reads −167.0 [about −184.6, −150.1], against the banked +153.44 [+123.98, +185.14] for E2 over E1, so the
+  intervals overlap. Stage 0 used 3× the games.
 
 **Observation, unexplained, with no causal claim: the 1-sim ladder inverts for E1.**
 - At 1 sim, E1 beats the SL base by +156.3, while M loses by −88.0. Ordered by step along the SL trajectory, the 1-sim
-  reading is E1 +156, M −88, E2 0. That is non-monotone, and E1's sign is the opposite of its 64-sim sign.
+  reading is E1 +156, M −88, E2 0. E2's 0 is the reference by definition, not a reading. The sequence is non-monotone,
+  and E1's sign is the opposite of its 64-sim sign.
 - **It is not a seat or sign error.** E1 scores 0.735 as the candidate, and the SL base scores 0.285 as the candidate.
   The two seats agree.
 - Loop nets showed a related pattern earlier (gains at 1 sim, none at 64; evidence log, "Loop nets vs SL base at 1 /
-  4 / 16 / 64 sims"). That pattern does not explain this one.
-- **A read-only investigation of the 1-sim move rule is in progress.** Until it reports, the 1-sim column is reported
-  only and decides nothing.
+  4 / 16 / 64 sims"). That pattern is not shown to explain this one.
+- **What a 1-sim score measures, traced in code. This is a fact about the instrument, not a cause.** The source is a
+  read-only Codex trace at pin `d08b03adb` (gumbel.py, gumbel_c.py, sampling.py). No checkpoint, torch or GPU was run.
+  - At 1 sim with no Gumbel noise, the arena visits only the top-prior move.
+  - Every unvisited move gets the completed Q (v + q₁)/2, where v is the root value and q₁ the visited child's value.
+    After min–max normalisation, if q₁ < v, every other move receives the full root bonus S and the visited move none.
+  - The move is then sampled from softmax((log prior + bonus) / T).
+  - **The scale S depends on the search shape.** The trace gives S ≈ 47.6 under the `play` shape defaults. Stage 0 ran
+    `--search-shape training`, and its results rows record c_scale 0.1, c_visit 50, so S = 0.1 × (50 + 1) = **5.1**
+    here.
+  - Even at 5.1, the next move outscores the top-prior move whenever the top prior is less than e^5.1 ≈ 164 times the
+    next one. At T = 0.1, play then usually goes to that unvisited move.
+  - **So a 1-sim score at T = 0.1 largely measures this value veto, not policy quality.**
+  - The evidence log has a related control. P1 c12's 1-sim gain over the SL base was +240.8 at T = 0.1 (Table 1, "Loop
+    nets vs SL base at 1 sim") and +79.1 [+59.7, +98.9] at T = 0 (Table 1, "T1 / T0 1-sim (H1: 1-sim gain is a veto
+    artefact)"), on the same opening pairs.
+  - This does not identify which mechanism changed between E1, M and E2.
+- **The read-only investigation of the 1-sim move rule continues.** Until it reports, the 1-sim column is reported only
+  and decides nothing.
 
 **Files** (full sha256):
 - `stage0/P.json`: `c14be5ca9024bb74a1371d08c0e315e57bbbc6ac20611eea6d1e875ab61955a2`
@@ -348,7 +378,7 @@ kC (the net that really played the rows), as both arguments.
 - `planned_phase_updates` / `phase_train_rows` gave **5,174 / 2,648,696**, equal to `plan_C.json`.
 - Nothing was written into the pool.
 
-The transcript is `test/ref_banked_real_validation.txt` [`56c8b8f9`].
+The transcript is `PC/test/ref_banked_real_validation.txt` [`56c8b8f9`].
 
 **Not verifiable without torch:**
 - `planned_updates.py`'s own `train_settings`, which does a `torch.load` of the init checkpoint;
@@ -468,15 +498,20 @@ Run it with `VF_PY`, `VF_TEST_MEMINFO`, `PC_BANK`, `VF_BANK`, `DF_BANK` unset.
 - `SHA256SUMS` [`80965d6f`] is unchanged, so Stage 0's pin is untouched.
 - The new runtime file is listed in **`SHA256SUMS.banked`** [`a6df8f67`], which the new launcher pins:
   `common/ref_banked_pc.py` [`4c79fb3c`].
-- `SHA256SUMS.launch` [`ffc121ca`] adds the new launcher, harness, outputs and validation transcript.
+- `SHA256SUMS.launch` (`ffc121ca` at Amendment 1; re-made by Amendment 2, see there) adds the new launcher, harness,
+  outputs and validation transcript.
 
 ### Harness (Amendment 1)
 
-**`test/harness_banked.sh` [`05f27bce`]: 33 of 33 pass** (`test/harness_banked.out` [`ec61a9e3`]).
+**`test/harness_banked.sh` (Amendment 1's file, `05f27bce`): 33 of 33 pass** (its output `ec61a9e3`).
+
+Both files were later replaced by Amendment 2's versions, which pass 40 of 40 and are stamped there. Amendment 2's re-run
+overwrote the Amendment 1 output file, so `ec61a9e3` is no longer in the bank.
 
 **Setup.** The same construction as `harness_pc.sh`:
 - a fake HOME with a copy of the bank, a stub guard and a stub interpreter;
-- `test/fake_pc.py` [`8d0f2928`], now also standing in for `ref_banked_pc.py` and for a `run` without
+- `test/fake_pc.py` (`8d0f2928` at Amendment 1; Amendment 2's file is stamped there), now also standing in for
+  `ref_banked_pc.py` and for a `run` without
   `--collect-from`;
 - read-only symlinks to the real checkpoints, the pin worktree, phase B's `plan_C.json` and `arm_C` `metrics.json`,
   and **the real `pool_C`**.
@@ -527,7 +562,7 @@ amendment follows it in an addendum.
     a draw with termination `max_plies`. The pin's arena counts it in the results row's `max_plies_unresolved`.
   - **It refuses (95) a seat that has an abort sidecar (`.games.jsonl.unresolved.jsonl`) beside it.**
 - **Every Stage 1 read** goes through **`common/contrast_pc_mp.py`** [`f241050a`], which is `contrast_pc.py` with the
-  value follow-up's amended reader. That reader, its `contrast_v2.py` [`ab514cae`], is copied byte for byte as
+  value follow-up's amended reader. That reader, its `VF/common23/contrast_v2.py` [`ab514cae`], is copied byte for byte as
   `common/contrast_v2mp.py`. It is renamed because the unamended `contrast_v2.py` is pinned by Stage 0.
   - The header comparison leaves out `on_max_plies`.
   - Each run's results-row policy must be abort or draw and equal its header's.
@@ -538,7 +573,7 @@ amendment follows it in an addendum.
   instead of `OUT` and exits 3. The launcher then writes `HOLD_MAXPLIES`, and the owner decides.
   - The bound is 4 of a 1,600-game look-1 seat, 12 of a 4,800-game look-2 seat, and 2 of an 800-game 16- or 1-sim
     seat.
-- **Wiring.** `common/lib_pc_mp.sh` [`cb5870bd`] is sourced after `lib_pc.sh`. It replaces `seat()` (`run_v3_match.sh`,
+- **Wiring.** `PC/common/lib_pc_mp.sh` [`cb5870bd`] is sourced after `lib_pc.sh`. It replaces `seat()` (`run_v3_match.sh`,
   and the PARTIAL message names the sidecar) and adds `read_c`, which maps exit 3 to `HOLD_MAXPLIES`. Nothing else in
   the launcher changed.
 
@@ -554,7 +589,7 @@ Both are far inside the ±8.5 / ±4.3-Elo per-arm half-widths. Above the bound, 
 owner decides.
 
 **Stage 0 is unchanged and stays on `abort`, as registered.** It was live when this amendment was written. No file in
-`SHA256SUMS` [`80965d6f`] and nothing `launch_stage0.sh` uses was modified.
+`PC/SHA256SUMS` [`80965d6f`] and nothing `launch_stage0.sh` uses was modified.
 - **Stage 1 reads no Stage 0 seat.** It takes only `stage0/P.json`.
 - **The amended reader still accepts abort seats with 0 unresolved** together with draw seats. The harness checks this
   on a mixed look.
@@ -569,7 +604,7 @@ owner decides.
 - **New launcher sha256: `9191300c32d11f2c7e6c8fa3f94e36ec23e05b13a26f166b40a957e11f1625a8`.** Amendment 1's launch
   check now expects this value. The only change from Amendment 1's `2e76e133…` is the `SHA256SUMS.banked` pin, the
   `lib_pc_mp.sh` source line, `read_c` in place of `contrast_pc.py`, and the header comment.
-- **`SHA256SUMS.banked` [`cf926c1c`]** lists `ref_banked_pc.py`, `run_v3_match.sh`, `contrast_v2mp.py`,
+- **`PC/SHA256SUMS.banked` [`cf926c1c`]** lists `ref_banked_pc.py`, `run_v3_match.sh`, `contrast_v2mp.py`,
   `contrast_pc_mp.py` and `lib_pc_mp.sh`.
 - `SHA256SUMS` is unchanged. `SHA256SUMS.launch` is now [`e810ad0d`].
 
@@ -579,7 +614,7 @@ owner decides.
 
 The new refusal is `HOLD_MAXPLIES` (81 on relaunch).
 
-**Harness.** `test/harness_banked.sh` [`98704f69`] passes 40 of 40: Amendment 1's 33, plus 7 new checks.
+**Harness.** `PC/test/harness_banked.sh` [`98704f69`] passes 40 of 40: Amendment 1's 33, plus 7 new checks.
 - **New checks:**
   - **Over the bound:** 5 max-plies draws in a 1,600-game seat give exit 3, `HOLD_MAXPLIES`, and `OUT.HOLD.json` naming
     that seat. No `OUT` is written and the E2 half never starts. A relaunch is refused with 81.
@@ -591,16 +626,16 @@ The new refusal is `HOLD_MAXPLIES` (81 on relaunch).
   - **A row/log count mismatch is refused** (2).
   - **`run_v3_match.sh` refuses a seat with an abort sidecar** (95) and plays nothing.
 - **Harness fixes:**
-  - `test/fake_pc.py` [`ade63d5d`]'s arena now honours `--on-max-plies`. `FAKE_MAXPLY` makes games of a named seat
+  - `PC/test/fake_pc.py` [`ade63d5d`]'s arena now honours `--on-max-plies`. `FAKE_MAXPLY` makes games of a named seat
     reach max plies: they become draws under draw, and under abort the run writes a sidecar and exits 1.
   - Both harnesses now copy only the launchers, never a stage dir's run state, because the real Stage 0 was live while
     they ran.
-- **The original `test/harness_pc.sh` [`fc6f83f4`]** was re-run after these changes: 57 of 57, with output byte-identical
+- **The original `PC/test/harness_pc.sh` [`fc6f83f4`]** was re-run after these changes: 57 of 57, with output byte-identical
   (`harness_pc.out` still [`1497e23c`]). `test/harness_banked.out` is [`9a183e6b`].
 
 **Mutant: the draw flag ignored.** `run_v3_match.sh`'s `--on-max-plies draw` was set back to `abort` on a scratch copy
 of the bank, with `SHA256SUMS.banked` and its pin re-made in the copy.
-- **Result:** `TOTAL PASS=22 WRONG=18` (`test/mutant_banked_maxplies_abort.out` [`d707ce19`]). `fC64_1_A`, which has 4 max-plies
+- **Result:** `TOTAL PASS=22 WRONG=18` (`PC/test/mutant_banked_maxplies_abort.out` [`d707ce19`]). `fC64_1_A`, which has 4 max-plies
   games, aborts, so the P half never reads. The results-row check reads `False`.
 
 **Not verifiable without the GPU:**
@@ -943,8 +978,8 @@ Nothing here changes live training, the live yaml, any banked file or any other 
 ## Bank and launchers
 
 Every runtime file is listed in `~/chess-artifacts/operations/rl-precooldown-start/SHA256SUMS` [`80965d6f`]. Both
-launchers pin that file's sha256 and the guard's. Launchers, tests and outputs are listed in `SHA256SUMS.launch`
-[`a1e836e0`].
+launchers pin that file's sha256 and the guard's. Launchers, tests and outputs are listed in
+`PC/SHA256SUMS.launch` [`e810ad0d`] (`a1e836e0` at revision 2).
 
 | File | sha256 | Origin |
 |---|---|---|
@@ -952,10 +987,10 @@ launchers pin that file's sha256 and the guard's. Launchers, tests and outputs a
 | `stage1/launch_stage1.sh` | `5145a2168a03b47bb410a2f1f5233f7e377f9093f1827ed806a00b4276b9754a` | revision 2: P half, gate, E2 half, fresh collections. **SUPERSEDED by Amendment 1; kept, never to be run** |
 | `stage1/launch_stage1_banked.sh` | `2e76e13351f53df655b3a71232252ff04f0febda65fa5ddd184a02b012130511` | Amendment 1: the same halves on the banked `pool_C`; pins `SHA256SUMS` and `SHA256SUMS.banked` |
 | `common/ref_banked_pc.py` | `4c79fb3c…` (in `SHA256SUMS.banked`) | Amendment 1: the pin's `reference_collect` with the pool's own actor |
-| `common/opt_check_pc.py` | `e4210b43…` | derived from `opt_check_v.py` [`1c75c174`], changes in its header |
+| `common/opt_check_pc.py` | `e4210b43…` | derived from `VF/common23/opt_check_v.py` [`1c75c174`], changes in its header |
 | `common/contrast_pc.py` | `43bf5557…` | revision 2: per-half deciding contrast, gate, Stage 2 trigger; imports `contrast_v2.py` / `contrast_v.py` unchanged |
 | `common/gpu_holders.py` | `9991af8d…` | phase A's, byte for byte |
-| `common/gpu_guard_pc.sh` | `0bfcab5e…` | the value follow-up's `gpu_guard_v23.sh` [`99f51eb9`] with three stated changes |
+| `common/gpu_guard_pc.sh` | `0bfcab5e…` | the value follow-up's `VF/common23/gpu_guard_v23.sh` [`99f51eb9`] with three stated changes |
 | `common/lib_pc.sh` | `db35650a…` | `common23/lib23.sh`'s run / ram floor / seat / match / step, with a per-seat parent |
 | `common/pc_flags.sh` | `7ef64d49…` | the starts, rates, flags and seeds; `TRAIN` / `ZQ` byte for byte from phase B |
 | `common/pick_p.py` | `40625ff0…` | Stage 0's P rule |
@@ -1020,14 +1055,15 @@ written.
 
 ### Harness
 
-**`~/chess-artifacts/operations/rl-precooldown-start/test/harness_pc.sh` [`5f6baa0f`]: 57 of 57 pass**
-(`test/harness_pc.out` [`1497e23c`]).
+**`PC/test/harness_pc.sh` [`fc6f83f4`]: 57 of 57 pass** (`PC/test/harness_pc.out` [`1497e23c`]). This is the
+Amendment 2 file. Revision 2's file was `5f6baa0f`; the only change since is copying launchers instead of stage dirs.
+The output is byte-identical.
 
 **Setup.**
 - A fake HOME with a copy of the bank.
 - Read-only symlinks to the three real SL checkpoints (the sha256 pins are checked on the real bytes), to phase B's
   `arm_C` train templates and reference `metrics.json`, and to the pin worktree.
-- A stub interpreter that runs every stdlib tool for real, and `test/fake_pc.py` [`73ad6fa3`] in place of each torch
+- A stub interpreter that runs every stdlib tool for real, and `test/fake_pc.py` (`73ad6fa3` at revision 2) in place of each torch
   call. The fake collect gives E2 95 rows per game and P 100, so P's collect is the longer and the U_own < U_P / Co path
   is exercised.
 - No torch. `CUDA_VISIBLE_DEVICES` is empty for every python.
@@ -1067,9 +1103,9 @@ written.
 
 **The reviewer's mutant now dies, in both forms (each run on a scratch copy of the bank).**
 - **`own_C_minus_A` computed as C − B** whenever B is present: `TOTAL PASS=56 WRONG=1`, the failing check being "the
-  2×2's five contrasts each equal their G combination exactly" (`test/mutant_own_C_minus_B_guarded.out` [`d7464efe`]).
+  2×2's five contrasts each equal their G combination exactly" (`PC/test/mutant_own_C_minus_B_guarded.out` [`d7464efe`]).
 - **The literal mutant (always C − B):** `TOTAL PASS=48 WRONG=9`. The own read crashes, so the full branch fails
-  (`test/mutant_own_C_minus_B_literal.out` [`908111f5`]).
+  (`PC/test/mutant_own_C_minus_B_literal.out` [`908111f5`]).
 
 No other mutant series, per the owner's rule.
 
