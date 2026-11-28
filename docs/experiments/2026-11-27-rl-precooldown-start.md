@@ -1,10 +1,14 @@
 # RL: start from before the SL learning-rate drop (pre-registration; Stages 0–1 launch-ready, Stage 2 design only)
 
-Date: 2026-11-27. Status: registered (revision 2, after the non-author review of #1555), nothing launched.
+Date: 2026-11-27. Status: registered (revision 2, after the non-author review of #1555), plus **Amendment 1
+(Stage 1 on banked rows)**. Nothing launched.
 - **Stage 0** launches when this record is merged, the coordinator writes `stage0/STAGE0_GO`, and a `pc0` release line
   is written in a gap when no value follow-up launcher is live. "Bank and launchers" says how the guard prevents
-  overlap and how to avoid blocking Step 3.
-- **Stage 1** launches after `stage0/STAGE0_DONE`, `stage1/STAGE1_GO` and a `pc1` release line.
+  overlap and how to avoid blocking Step 3. Amendment 1 does not change Stage 0, its launcher or its pins.
+- **Stage 1 (Amendment 1)** trains all four arms on the banked rows of deep/fast phase B's `pool_C`, with no
+  collection. It launches with `stage1/launch_stage1_banked.sh` after `stage0/STAGE0_DONE`,
+  `stage1/banked/STAGE1B_GO` and a `pc1` release line. The collecting launcher `stage1/launch_stage1.sh` is
+  **superseded**: it stays in the bank, unrun, and the new launcher refuses while its GO file or state exists.
 - **Revision 2:**
   - Stage 1 runs the P half first and buys the E2 half only if a registered gate passes;
   - the head-swap reading is dropped;
@@ -166,7 +170,253 @@ game. The 1-sim rate is the value follow-up's ≈ 0.05 h per 3,200 games.
 | 1 sim, 2 × 1,200 games | ≈ 0.04 h |
 | **Total** | **≈ 0.55 h** |
 
-## Stage 1: the crossed test, run as two halves (revision 2, after the #1555 review)
+## Amendment 1 (2026-11-27): Stage 1 trains on banked rows
+
+**The owner's decision**, in his words: "I think it would he ok to reuse those game even if they are off policy its
+not too far off and its more games and its closer than bt4 thar was sl". This amendment replaces revision 2's
+collections. The arms, rates, recipe, gate, deciding contrasts, bands, Stage 2 trigger and match protocol are
+unchanged. Where the revision-2 Stage 1 section below conflicts with this one, this one holds.
+
+### What changes
+
+- **No collection.** `collect_P`, `collect_E2`, the E2-half collection and their monitors are dropped.
+- **All four arms train on the same banked rows,** in the same order, each row once:
+  - from P: C at P's rate, D at the floor;
+  - from the SL base E2: A at the floor, B at P's rate.
+- **The rows are `~/chess-artifacts/operations/rl-deep-fast/stage2/phaseb/pool_C`,** read only and never moved:
+  - 27,955 games and 2,785,627 rows, actor `kC_baked.pt` (`c48a7b2c…`), stock 64 sims (search share 1.0);
+  - collect manifest sha256 `f5ba4cb33d4851c87372125003bbb47f80b579e0b28b97feafa6d197e3edc3e6`, pinned by the launcher;
+  - 2,648,696 trainable rows after the 0.05 hold-out.
+- **Every arm uses the pool's seed, 2026112703, and its 27,955 games.** The pin's reference check does not exempt `seed`
+  from the settings comparison, and the same seed draws the batch plan. So every arm sees the rows in phase B arm_C's
+  order, with phase B's `TRAIN` / `ZQ` (presentations 1, uniform shuffle, mirror probability 0.5, batch 512).
+- **Every arm runs U = 5,174 updates,** phase B's planned count on these rows (`phaseb/plan_C.json`, sha256
+  `4530e556…`, pinned). Snapshots are taken at phase B's 2,587 and 5,174. The deciding net is the snapshot at 5,174,
+  recalibrated against the arm's own parent on the pool's hold-out games, then baked. **Exposure is equal by
+  construction,** so revision 2's snapshot grid, U_own, `HOLD_DOSE` and the Co net are all dropped. `own` compares A
+  with C directly.
+- **Seeds 2026112821 (collects and training) are retired.** The look seeds 2026112811 / 2026112812 are unchanged.
+
+### Which pool, and why not both
+
+There were two candidate pools.
+1. **`pool_C`** (above), played by kC_baked.
+2. **The SL base's own rows:** the pilot collect `rl-run1-pilot/collect/gen_0001/collect`. It holds 8,000 games and
+   761,979 rows, actor `a39f900c…`, pin `0c795fb7`, seed 2026112100.
+
+**`pool_C` alone is used.** The reasons:
+- **It is the dose on its own.** At 2.79M rows it meets the ≥ ~2.8M-row regime of the data-volume and phase B steps.
+  The pilot adds 0.27 of a dose.
+- **Mixing the two would give two actors an asymmetric role.** 22 % of a combined pool would be exactly on-policy for
+  A and B, the E2 starts, and off-policy for C and D. That tilts `own` and the start contrast toward E2 by
+  construction. With `pool_C` alone, every arm is off-policy and the confound is one stated quantity.
+- **A combined pool would be a new artifact with one actor field for rows from two nets.** The phase B pooling tool
+  refuses mixed actors, and the reference record carries one `inputs.checkpoint`. It would also join rows from two pins
+  and two seeds.
+- **Compatibility was checked and is not the obstacle.** The two collects' shard key sets are identical (every key,
+  including `search_wdl` / `has_search_wdl`). Their settings differ only in seed, games and two keys the pilot predates
+  (`root_full_width`, `eval_chunk_rows`).
+
+**Arm A cannot be reused from the bank.** No banked net is "SL base, floor rate, these rows, this order, this recipe".
+- The evidence log has no SL-base-init training on `pool_C`.
+- The only SL-base floor-rate arm, the pilot's Zq, trained on the pilot rows at another pin.
+- The one net trained at the floor on exactly these rows, in this order and with this recipe, is phase B's `C_baked`,
+  from kC: −5.81 [−10.07, −1.55] against kC. That is a different start, and it is quoted only as context.
+
+So A is retrained.
+
+### The trainer path for off-policy rows (verified in source at the pin and on the real pool)
+
+**`--collect-from` refuses these rows for every arm.** `reference.reference_collect` receives the arm's generation-0
+model as both `gen0_model` and `actor_checkpoint`. It refuses rows played by any other net: "its rows would be
+off-policy for this arm". That is the guard the owner waived here.
+
+**The new tool `common/ref_banked_pc.py` calls the same pin function** with the pool's own sealed generation-0 model,
+kC (the net that really played the rows), as both arguments.
+- **Every other check runs unchanged:**
+  - the source is sealed and not itself a reference;
+  - every output sha256 is recomputed against its manifest;
+  - the TRAIN openings' sha256 matches;
+  - the collect settings equal the source's (`precheck_source`, with seed and games not exempt).
+- **The sealed reference records the true actor** (`inputs.checkpoint` = kC) and the `source_*` inputs, which
+  `lineage.verify_stage` re-hashes before every later stage.
+- **Each arm then runs `simple_rl_loop.py run --init-checkpoint <start>` with no `--collect-from`.** It creates
+  generation 0 from the start, verifies and skips the sealed collect, and trains from the start.
+- **Nothing in the train path compares the collect's actor with generation 0.** Checked in `learn.py` and
+  `simple_rl_loop.py`: the only actor check is the one in `reference_collect`.
+
+**Verified on the real pool today, with no torch.** A stub `torch` module (version string only) was put first on
+`PYTHONPATH`, with `CUDA_VISIBLE_DEVICES` empty, and the output went to a scratch arm dir.
+- The tool sealed the reference with arm A's real flags, and the pin's `reference_collect` accepted.
+- It recorded 282 source shard files, 2,785,627 rows and actor kC.
+- `verify_stage(collect)` then accepted.
+- `planned_phase_updates` / `phase_train_rows` gave **5,174 / 2,648,696**, equal to `plan_C.json`.
+- Nothing was written into the pool.
+
+The transcript is `test/ref_banked_real_validation.txt` [`56c8b8f9`].
+
+**Not verifiable without torch:**
+- `planned_updates.py`'s own `train_settings`, which does a `torch.load` of the init checkpoint;
+- `validate_before_pinning`;
+- the run itself.
+
+The launcher re-runs the planner per arm and writes `HOLD_PLAN` unless it gives 5,174 / 2,648,696 and phase B's
+snapshot plan.
+
+### The confound, stated plainly
+
+**The rows are off-policy for every arm.** They were played by kC_baked, which reads +8.52 [+4.00, +13.05] against
+the SL base at 64 sims (evidence log). kC is stronger than E2 and further still from P, which Stage 0 measures below E2.
+- So Stage 1 now reads **"does the pre-cooldown start, or the higher rate, learn more from the same data"**.
+- It is **not a full on-policy generation.** No arm's targets come from its own search.
+- **The distance is not symmetric between starts.** It is larger for C and D (from P) than for A and B (from E2). Any
+  start contrast (`own`, D − A) carries "how far the teacher's rows are from this start" alongside parent headroom.
+- **rate_P (C − D) is free of this,** because both arms share the start, the rows and the order.
+- A positive `own` here would not show that P's own collections would train as well.
+
+### Contrasts, rules, power and GPU-hours under Amendment 1
+
+**Unchanged:**
+- the P half first and its gate (rate_P point estimate ≥ 0);
+- rate_P = G_C − G_D deciding the P half, and own = G_C − G_A deciding the E2 half;
+- the bands, the extension rule, the Stage 2 trigger and its stated limit, and the 16 / 1-sim reports.
+
+Every G_X is still the arm's baked net against its own parent at 64 sims.
+
+**Power:** the same per-arm ±8.5 Elo at 3,200 games, ±12 (MDE ≈ 17) for each contrast at look 1, and ±6 (MDE ≈ 8.5)
+at 12,800 per arm. All four arms now share the rows and the order, so `own`'s arm-to-arm correlation may exceed 0 too.
+Each readout reports the realised correlation.
+
+**GPU-hours.** Measured basis as in revision 2: phase B `train_C` 33 min on this pool, which already includes the
+reference's re-hash; smoke 5.5 min; fit about 5 min; 0.72 s per 64-sim game. The references and plans are CPU only.
+
+| Item | P half | E2 half |
+|---|---|---|
+| Two smokes | 0.2 | 0.2 |
+| Two trainings | 1.1 | 1.1 |
+| Fits and bakes | 0.25 | 0.25 |
+| 64 sims, look 1 (2 × 3,200) | 1.3 | 1.3 |
+| 16 and 1 sims (2 × 1,600 each) | 0.25 | 0.25 |
+| **Half, look 1** | **≈ 3.1 h** | **≈ 3.1 h** |
+| Look 2 if triggered (2 × 9,600) | +3.8 | +3.8, or +1.9 if C's look 2 was already played |
+
+| Branch | Stage 0 + Stage 1 | Worst case with every extension |
+|---|---|---|
+| **Gate fails** | 0.55 + 3.1 ≈ **3.7 GPU-h** | ≈ 7.5 |
+| **Gate passes (full)** | 0.55 + 3.1 + 3.1 ≈ **6.8 GPU-h** | ≈ 12.5 |
+
+Revision 2 was ≈ 8.7 / 17.0, or 12.6 / 25.4 with extensions. The ~10.2 GPU-h of the two collections is gone. Disk:
+about 4 × 0.5 GB of snapshots plus the baked nets, and no collect.
+
+### Steps (`stage1/launch_stage1_banked.sh`)
+
+Per half (P half: C, D; then the gate; E2 half: A, B):
+1. **`ref_<X>`.** `ref_banked_pc.py` seals `arm_<X>/gen_0001/collect` as the pool reference. Then a check: it is a
+   reference to the pinned pool manifest, its actor and source generation 0 are kC, and its seed is the pool's. CPU
+   only.
+2. **`plan_<X>`.** The pin's planner on the arm's own flags must give 5,174 / 2,648,696 and phase B's snapshot plan,
+   else `HOLD_PLAN`. CPU only.
+3. **`smoke_<X>`.** The 3-update GPU memory smoke, reading the pool read-only as phase B did, and the update-1 lr void
+   (`HOLD_LR_<X>`). Host-RAM floor 86 GiB.
+4. **`train_<X>`.** `simple_rl_loop.py run` without `--collect-from`. Then the reference re-check and
+   `common/opt_check_pc.py` against phase B's `arm_C` (`HOLD_TRAIN_CHECK`), with U = 5,174 and snapshots 2,587,5,174.
+5. **`fit_<X>`, `bake_<X>`.** The snapshot at 5,174, against the arm's parent, on the pool collect's hold-out games
+   (`--collect-dir pool_C/gen_0001/collect/ --holdout-frac 0.05`).
+6. **`msmoke_<X>`, `f64_<X>`, the read, `x64_*` (iff extend), `f16` / `f1`, `readrep*`, `read2x2`.** As in revision 2,
+   with outputs under `stage1/banked/`.
+7. **`verdict.json`, then `STAGE1B_DONE`.**
+
+**The ONE deciding yardstick, per half (exact commands).** B=`~/chess-artifacts/operations/rl-precooldown-start`,
+S=`$B/stage1/banked/arenas`, E2 and P the checkpoint paths above.
+
+P half (`readP_1`):
+```
+python3 $B/common/contrast_pc.py 64 --decide rate_P --out $B/stage1/banked/contrast_rateP_looks1.json --look 2026112811 \
+  C=$S/fC64/fC64_1_A.games.jsonl,$S/fC64/fC64_1_B.games.jsonl,<P> \
+  D=$S/fD64/fD64_1_A.games.jsonl,$S/fD64/fD64_1_B.games.jsonl,<P>
+```
+E2 half (`readE_1`):
+```
+python3 $B/common/contrast_pc.py 64 --decide own --rate-p <the P half's final file> \
+  --out $B/stage1/banked/contrast_own_looks1.json --look 2026112811 \
+  A=$S/fA64/fA64_1_A.games.jsonl,$S/fA64/fA64_1_B.games.jsonl,<E2> \
+  C=$S/fC64/fC64_1_A.games.jsonl,$S/fC64/fC64_1_B.games.jsonl,<P>
+```
+Look 2 adds `--look 2026112812` with the `_2_` logs, written to `*_looks12.json`.
+
+### Launch (Amendment 1)
+
+1. **Check:** `sha256sum ~/chess-artifacts/operations/rl-precooldown-start/stage1/launch_stage1_banked.sh` must print
+   `2e76e13351f53df655b3a71232252ff04f0febda65fa5ddd184a02b012130511`.
+2. **Prerequisites:**
+   - `stage0/STAGE0_DONE` and `stage0/P.json` exist;
+   - `stage1/banked/STAGE1B_GO` is written by the coordinator;
+   - a `pc1 idle_mib=<MiB> <ISO time>` line is in the bank's `GPU_RELEASED_BY_OPERATOR`, written only after value
+     follow-up Step 3 completes or is cancelled;
+   - `stage1/STAGE1_GO` is never written.
+3. **Launch:**
+   `PC=~/chess-artifacts/operations/rl-precooldown-start/stage1; setsid nohup bash $PC/launch_stage1_banked.sh >> $PC/banked/stage1b.log 2>&1 < /dev/null &`
+4. **Stop:** `kill -TERM $(cat ~/chess-artifacts/operations/rl-precooldown-start/stage1/banked/stage1b.pid)`, then
+   check `ps` for leftovers naming the bank.
+
+Run it with `VF_PY`, `VF_TEST_MEMINFO`, `PC_BANK`, `VF_BANK`, `DF_BANK` unset.
+
+**Refusals.** Stage 0's codes apply (90 no GO, 93 sums or guard, 94, 82, 81, 84, 97 / 96, 8 / 9), plus:
+- 91: Stage 0 not done, or `P.json` missing or naming no registered rung;
+- 92: a checkpoint, the pool manifest, `plan_C.json` or phase B's `arm_C` reference not as pinned;
+- **83: the superseded launcher's `stage1/STAGE1_GO`, `inputs.txt` or `stage1.pid` exists;**
+- 89: the host-RAM floor;
+- `HOLD_PLAN` / `HOLD_LR_<X>` / `HOLD_MEM` / `HOLD_TRAIN_CHECK` (81 on relaunch).
+
+**Pins.**
+- `SHA256SUMS` [`80965d6f`] is unchanged, so Stage 0's pin is untouched.
+- The new runtime file is listed in **`SHA256SUMS.banked`** [`a6df8f67`], which the new launcher pins:
+  `common/ref_banked_pc.py` [`4c79fb3c`].
+- `SHA256SUMS.launch` [`ffc121ca`] adds the new launcher, harness, outputs and validation transcript.
+
+### Harness (Amendment 1)
+
+**`test/harness_banked.sh` [`05f27bce`]: 33 of 33 pass** (`test/harness_banked.out` [`ec61a9e3`]).
+
+**Setup.** The same construction as `harness_pc.sh`:
+- a fake HOME with a copy of the bank, a stub guard and a stub interpreter;
+- `test/fake_pc.py` [`8d0f2928`], now also standing in for `ref_banked_pc.py` and for a `run` without
+  `--collect-from`;
+- read-only symlinks to the real checkpoints, the pin worktree, phase B's `plan_C.json` and `arm_C` `metrics.json`,
+  and **the real `pool_C`**.
+
+**What it proves:**
+- **Every refusal above,** with nothing run during them.
+- **`HOLD_PLAN`** when the planned count is not 5,174, with nothing smoked, trained or played.
+- **The stop branch:** A and B are never referenced, trained or played, there is no collect, and rate_P = G_C − G_D
+  exactly.
+- **The full branch:**
+  - there is no collect;
+  - the P half runs strictly before the E2 half;
+  - every arm's collect is a reference to the real pool manifest, with actor kC and seed 2026112703;
+  - every arm's `run` argv has no `--collect-from`, the pool's seed and games, its own start, mirror 0.5,
+    presentations 1, its rate and multiplier 20, and snapshots 2587,5174;
+  - every arm planned and ran 5,174 updates over 2,648,696 rows, and every train check is ok;
+  - the realised lr per arm is correct;
+  - each fit uses the snapshot at 5,174, against the arm's own parent, on the pool's collect;
+  - own = G_C − G_A exactly, with no Co;
+  - the 2×2's five identities hold;
+  - the Stage 2 trigger fires;
+  - the 16 / 1-sim reports are produced.
+- **Relaunch is idempotent,** and the superseded launcher left no state.
+- **Nothing is written** outside the fake bank or into the real pool: no file under it is newer than the harness start,
+  and its manifest sha256 is unchanged.
+
+**The original harness re-run after the `fake_pc.py` changes:** 57 of 57, with output byte-identical (`harness_pc.out`
+still [`1497e23c`]).
+
+**Mutant, run on a scratch copy of the bank.** Each arm's `--seed $POOL_SEED` was replaced with revision 2's
+`--seed $SEED_COLLECT`, a realistic slip that would silently change the row order.
+- **Result:** `TOTAL PASS=18 WRONG=15`. The launcher stops at `ref_C`'s `seed_is_the_pool_seed` check, so no arm
+  trains (`test/mutant_banked_seed_SEED_COLLECT.out` [`0f9d16e2`]).
+- In a real launch, the pin's `precheck_source` would also refuse it, because seed is not exempt.
+
+## Stage 1 as registered in revision 2 (SUPERSEDED by Amendment 1: fresh collections; kept for the record, not run)
 
 **Arms.** Each arm trains one generation from its start's own fresh collection.
 
@@ -444,7 +694,8 @@ deliberate choice. A failed gate does not forbid it; the gate only saves the E2 
     in the addendum);
   - is recalibrated against its parent and baked.
 
-  Generation 1 is Stage 1's arm C, reused.
+  Generation 1 is Stage 1's arm C, reused. Under Amendment 1 arm C trained on kC's banked rows, not its own, so the
+  chain's first generation is off-policy and generations 2 onward are on-policy. The Stage 2 addendum states this.
 - **The readings, every generation.** Against the **SL base**:
   - 64 sims, 3,200 games (12,800 at the end of the chain);
   - 16 sims and 1 sim, 1,600 games each.
@@ -476,6 +727,10 @@ deliberate choice. A failed gate does not forbid it; the gate only saves the E2 
 7. **The search config is frozen.**
 8. **One training seed and one match seed per look.** Two looks at an unadjusted z = 1.96 inflate α modestly, a
    property inherited from the value follow-up's bands.
+9. **(Amendment 1) Off-policy rows.** Every arm trains on rows played by kC_baked, a stronger net than either start.
+   The distance is larger from P than from E2. Start contrasts carry it, and rate_P does not (see "The confound,
+   stated plainly"). Under Amendment 1, items 2, 3 (the collect) and 5 no longer apply: one pool and one hold-out serve
+   every arm, at equal U.
 
 ## Recovery and stop
 
@@ -489,7 +744,8 @@ Nothing here changes live training, the live yaml, any banked file or any other 
   - never re-rolls a seat;
   - stops on a PARTIAL (87) or STALE (86) seat, a `HOLD_*` or `STOP` file (81), or an interrupted collect (88).
   The owner moves the named files into a new `aborted_*` directory. Nothing is ever deleted.
-- **`stage1/STOP`** pauses only inside the trainer (`--pause-marker`). The launcher refuses while it exists.
+- **`stage1/STOP`** pauses only inside the trainer (`--pause-marker`). The launcher refuses while it exists. Under
+  Amendment 1 the files are `stage1/banked/stage1b.pid` and `stage1/banked/STOP`.
 
 ## Bank and launchers
 
@@ -500,7 +756,9 @@ launchers pin that file's sha256 and the guard's. Launchers, tests and outputs a
 | File | sha256 | Origin |
 |---|---|---|
 | `stage0/launch_stage0.sh` | `c09a90a17ec7a4dd79f6c5477635ee3f5f9087c34bcefc8e3fc4b3592a8db49e` | new: Step 2's launcher structure (only the `SHA256SUMS` pin changed in revision 2) |
-| `stage1/launch_stage1.sh` | `5145a2168a03b47bb410a2f1f5233f7e377f9093f1827ed806a00b4276b9754a` | revision 2: P half, gate, E2 half |
+| `stage1/launch_stage1.sh` | `5145a2168a03b47bb410a2f1f5233f7e377f9093f1827ed806a00b4276b9754a` | revision 2: P half, gate, E2 half, fresh collections. **SUPERSEDED by Amendment 1; kept, never to be run** |
+| `stage1/launch_stage1_banked.sh` | `2e76e13351f53df655b3a71232252ff04f0febda65fa5ddd184a02b012130511` | Amendment 1: the same halves on the banked `pool_C`; pins `SHA256SUMS` and `SHA256SUMS.banked` |
+| `common/ref_banked_pc.py` | `4c79fb3c…` (in `SHA256SUMS.banked`) | Amendment 1: the pin's `reference_collect` with the pool's own actor |
 | `common/opt_check_pc.py` | `e4210b43…` | derived from `opt_check_v.py` [`1c75c174`], changes in its header |
 | `common/contrast_pc.py` | `43bf5557…` | revision 2: per-half deciding contrast, gate, Stage 2 trigger; imports `contrast_v2.py` / `contrast_v.py` unchanged |
 | `common/gpu_holders.py` | `9991af8d…` | phase A's, byte for byte |
@@ -561,8 +819,9 @@ as above.
    `PC=~/chess-artifacts/operations/rl-precooldown-start/stage0; setsid nohup bash $PC/launch_stage0.sh >> $PC/stage0.log 2>&1 < /dev/null &`
 3. Stop: `kill -TERM $(cat $PC/stage0.pid)`.
 
-Stage 1 is the same with `stage1`, `STAGE1_GO`, a `pc1` line and sha256
-`5145a2168a03b47bb410a2f1f5233f7e377f9093f1827ed806a00b4276b9754a`.
+Stage 1: **use Amendment 1's launch section** (`stage1/launch_stage1_banked.sh`, `stage1/banked/STAGE1B_GO`, a `pc1`
+line). Revision 2's `stage1/launch_stage1.sh` with `stage1/STAGE1_GO` is superseded, and `STAGE1_GO` must not be
+written.
 
 **Run both with `VF_PY`, `VF_TEST_MEMINFO`, `PC_BANK`, `VF_BANK`, `DF_BANK` and `DF_RSS_INTERVAL_S` unset.**
 
@@ -663,7 +922,9 @@ These are left for the first unmutated GPU pass:
 1. **P rule threshold −75 Elo**, highest rate first, with M as the expected pick. It only gates E1.
 2. **27,955 games per start** (phase A's dose), not 8,000. From E2 that is ≈ 2.66M rows and U ≈ 4,940, just under
    the 2.8M of the data-volume and phase B steps.
-3. **Fresh E2 collection** instead of the banked pilot rows.
+3. ~~Fresh E2 collection instead of the banked pilot rows.~~ **Replaced by the owner's decision (Amendment 1):** no
+   collection. All four arms train on the banked `pool_C`, and the pilot rows are not mixed in (reasons in Amendment
+   1).
 4. **No carried-moments fifth arm.**
 5. **Recalibration applied, its bounds reported not gated.**
 6. **Exposure equalised per contrast:** U_P for rate_P, U_own for own (via C's snapshot grid and Co).
@@ -671,4 +932,7 @@ These are left for the first unmutated GPU pass:
    only the deciding contrast. The Stage 2 trigger is own LB > 0 and rate_P ≥ 0.
 8. **16 / 1-sim reads at 800 per seat** (reported only).
 9. **Step 356,239 is not laddered.**
-10. **Seeds:** 2026112801 (Stage 0), 2026112821 (collects and training), 2026112811 / 2026112812 (Stage 1 looks).
+10. **Seeds:** 2026112801 (Stage 0), 2026112821 (collects and training; retired by Amendment 1, which trains at the
+    pool's 2026112703), 2026112811 / 2026112812 (Stage 1 looks).
+11. **(Amendment 1) Equal U = 5,174 for every arm** (phase B's plan on these rows), with snapshots at phase B's 2,587 /
+    5,174.
